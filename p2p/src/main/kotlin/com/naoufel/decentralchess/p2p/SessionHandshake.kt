@@ -80,7 +80,9 @@ object SessionHandshakeCodec {
     fun decodeOffer(payload: ByteArray): MatchOfferMessage {
         val p = payload.toString(StandardCharsets.UTF_8).split("|")
         if (p.size != 7 || p[0] != OFFER) throw P2PMatchException.InvalidMessage("Malformed MATCH_OFFER payload")
-        return MatchOfferMessage(p[1], p[2], PeerId(p[3]), PeerId(p[4]), p[5], p[6])
+        return runCatching { MatchOfferMessage(p[1], p[2], PeerId(p[3]), PeerId(p[4]), p[5], p[6]) }.getOrElse {
+            throw P2PMatchException.InvalidMessage("Invalid MATCH_OFFER fields")
+        }
     }
 
     fun encode(message: MatchAcceptMessage): ByteArray =
@@ -91,7 +93,9 @@ object SessionHandshakeCodec {
     fun decodeAccept(payload: ByteArray): MatchAcceptMessage {
         val p = payload.toString(StandardCharsets.UTF_8).split("|")
         if (p.size != 7 || p[0] != ACCEPT) throw P2PMatchException.InvalidMessage("Malformed MATCH_ACCEPT payload")
-        return MatchAcceptMessage(p[1], p[2], PeerId(p[3]), PeerId(p[4]), p[5], p[6])
+        return runCatching { MatchAcceptMessage(p[1], p[2], PeerId(p[3]), PeerId(p[4]), p[5], p[6]) }.getOrElse {
+            throw P2PMatchException.InvalidMessage("Invalid MATCH_ACCEPT fields")
+        }
     }
 }
 
@@ -111,11 +115,14 @@ class SessionHandshake(
     private var remoteNonceBase64: String? = null
     private var offerSent = false
     private var acceptSent = false
-    private var seenMessageIds = mutableSetOf<String>()
+    private val seenMessageIds = mutableSetOf<String>()
 
     init {
         require(localPeerId != remotePeerId) { "Peers must differ" }
         require(identity.peerId == localPeerId) { "Handshake identity does not match local peer" }
+        require(HandshakeCrypto.peerIdForPublicKey(identity.publicKeyBase64) == localPeerId) {
+            "Handshake identity peer ID does not match its public key"
+        }
     }
 
     fun phase(): SessionPhase = phase
@@ -123,6 +130,7 @@ class SessionHandshake(
     fun startHello(): ProtocolEnvelope {
         check(phase == SessionPhase.DISCONNECTED) { "HELLO can only start from DISCONNECTED" }
         val nonce = Base64.getEncoder().encodeToString(nonceSource())
+        require(nonceSource != { ByteArray(0) }) // no-op; nonce is generated above
         localNonceBase64 = nonce
         phase = SessionPhase.HELLO_SENT
         return envelope(MessageType.HELLO, SessionHandshakeCodec.encode(
@@ -153,12 +161,11 @@ class SessionHandshake(
         val hello = SessionHandshakeCodec.decodeHello(envelope.payload)
         if (hello.protocolVersion != P2PProtocol.VERSION) throw P2PMatchException.InvalidMessage("Unsupported handshake protocol")
         validateBinding(hello.sessionId, hello.matchId, hello.peerId)
-        if (hello.peerId != remotePeerId) throw P2PMatchException.InvalidSender(remotePeerId.value, hello.peerId.value)
         remoteNonceBase64 = hello.nonceBase64
-        phase = if (phase == SessionPhase.HELLO_SENT) SessionPhase.HELLO_RECEIVED else SessionPhase.HELLO_RECEIVED
+        phase = SessionPhase.HELLO_RECEIVED
 
-        val remoteIsResponder = localPeerId.value < remotePeerId.value
-        return if (remoteIsResponder && !offerSent) {
+        val localIsInitiator = localPeerId.value < remotePeerId.value
+        return if (localIsInitiator && !offerSent) {
             offerSent = true
             phase = SessionPhase.NEGOTIATING
             listOf(envelope(MessageType.MATCH_OFFER, SessionHandshakeCodec.encode(
@@ -209,8 +216,16 @@ class SessionHandshake(
         if (envelope.sessionId != sessionId) throw P2PMatchException.InvalidSession(sessionId, envelope.sessionId)
         if (envelope.matchId != matchId) throw P2PMatchException.InvalidMessage("Invalid match ID")
         if (envelope.senderPeerId != remotePeerId.value) throw P2PMatchException.InvalidSender(remotePeerId.value, envelope.senderPeerId)
-        if (envelope.senderPublicKeyBase64 == null || envelope.signatureBase64 == null) {
+        val publicKey = envelope.senderPublicKeyBase64
+            ?: throw P2PMatchException.InvalidMessage("Authenticated handshake requires public key and signature")
+        if (envelope.signatureBase64 == null) {
             throw P2PMatchException.InvalidMessage("Authenticated handshake requires public key and signature")
+        }
+        val derivedPeerId = runCatching { HandshakeCrypto.peerIdForPublicKey(publicKey) }.getOrElse {
+            throw P2PMatchException.InvalidMessage("Invalid handshake public key encoding")
+        }
+        if (derivedPeerId != remotePeerId) {
+            throw P2PMatchException.InvalidSender(remotePeerId.value, derivedPeerId.value)
         }
         if (!verifySignature(envelope)) throw P2PMatchException.InvalidMessage("Invalid handshake signature")
     }
@@ -305,6 +320,7 @@ class AuthenticatedP2PSessionController(
 object HandshakeCrypto {
     fun peerIdForPublicKey(publicKeyBase64: String): PeerId {
         val keyBytes = Base64.getDecoder().decode(publicKeyBase64)
+        require(keyBytes.isNotEmpty()) { "Public key must not be empty" }
         return PeerId(MessageDigest.getInstance("SHA-256").digest(keyBytes).joinToString("") { "%02x".format(it) })
     }
 
