@@ -3,4 +3,5 @@ android { namespace = "com.naoufel.decentralchess.security"; compileSdk = 35; de
 dependencies {
     implementation(project(":chess-core"))
     implementation(project(":identity"))
+    testImplementation("junit:junit:4.13.2")
 }
