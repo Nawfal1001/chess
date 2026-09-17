@@ -122,8 +122,10 @@ class P2PMatchStateTest {
     fun reconnectTransitionsThroughRecoveryAndBackToConnected() {
         val w = whiteMachine()
         val b = blackMachine()
-        w.createLocalMove(move(4, 1, 4, 3))
-        b.receive(w.createLocalMove(move(6, 0, 5, 2)))
+        val first = w.createLocalMove(move(4, 1, 4, 3))
+        b.receive(first)
+        val second = b.createLocalMove(move(3, 6, 3, 4))
+        w.receive(second)
         w.markDisconnected()
         assertEquals(MatchConnectionState.DISCONNECTED, w.connectionState())
 
