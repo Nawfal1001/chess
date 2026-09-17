@@ -173,7 +173,7 @@ class SessionHandshake(
         if (offer.initiatorPeerId != remotePeerId || offer.responderPeerId != localPeerId) {
             throw P2PMatchException.InvalidMessage("MATCH_OFFER peer binding mismatch")
         }
-        if (offer.challengeNonceBase64 != localNonceBase64) {
+        if (offer.challengeNonceBase64 != remoteNonceBase64) {
             throw P2PMatchException.InvalidMessage("MATCH_OFFER challenge mismatch")
         }
         if (offer.initialFen != initialFen) throw P2PMatchException.InvalidMessage("MATCH_OFFER initial position mismatch")
