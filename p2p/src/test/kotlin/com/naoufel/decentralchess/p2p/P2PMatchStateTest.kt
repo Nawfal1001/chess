@@ -13,8 +13,8 @@ class P2PMatchStateTest {
     private val black = PeerId("black-peer")
     private val session = "session-1"
 
-    private fun whiteMachine() = MatchStateMachine(session, white, black, Side.WHITE)
-    private fun blackMachine() = MatchStateMachine(session, black, white, Side.BLACK)
+    private fun whiteMachine() = MatchStateMachine(session, white, black, Side.WHITE, "match-1")
+    private fun blackMachine() = MatchStateMachine(session, black, white, Side.BLACK, "match-1")
 
     private fun move(fromFile: Int, fromRank: Int, toFile: Int, toRank: Int, promotion: PieceType? = null) =
         Move(Square(fromFile, fromRank), Square(toFile, toRank), promotion)
@@ -116,6 +116,52 @@ class P2PMatchStateTest {
         assertThrows(P2PMatchException.InvalidSession::class.java) {
             blackMachine().receive(valid.copy(sessionId = "other-session"))
         }
+    }
+
+    @Test
+    fun stateRecoveryReplaysDeterministicallyAndResetsIncomingSequence() {
+        val w = whiteMachine()
+        val b = blackMachine()
+        b.receive(w.createLocalMove(move(4, 1, 4, 3)))
+        w.receive(b.createLocalMove(move(4, 6, 4, 4)))
+
+        val stale = MatchStateMachine(session, black, white, Side.BLACK, "match-1")
+        val request = stale.createStateRequest()
+        val requestPayload = StateRequestCodec.decode(request.payload)
+        assertEquals(0L, requestPayload.expectedIncomingSequence)
+        assertEquals(stale.history().gameHash(), requestPayload.currentGameHash)
+
+        val response = w.createStateResponse(request)
+        val decoded = StateResponseCodec.decode(response.payload)
+        assertEquals(request.messageId, decoded.requestMessageId)
+        assertEquals(w.history().gameHash(), decoded.gameHash)
+        assertEquals(w.history().current.toFen(), decoded.finalFen)
+
+        stale.receiveStateResponse(response)
+        assertEquals(w.history().gameHash(), stale.history().gameHash())
+        assertEquals(w.history().current.toFen(), stale.history().current.toFen())
+        assertEquals(2, stale.snapshot().moveCount)
+        assertEquals(2L, stale.snapshot().expectedIncomingSequence)
+    }
+
+    @Test
+    fun tamperedStateResponseIsRejectedWithoutReplacingLocalState() {
+        val w = whiteMachine()
+        w.createLocalMove(move(4, 1, 4, 3))
+        val stale = MatchStateMachine(session, black, white, Side.BLACK, "match-1")
+        val request = stale.createStateRequest()
+        val response = w.createStateResponse(request)
+        val originalHash = stale.history().gameHash()
+        val decoded = StateResponseCodec.decode(response.payload)
+        val tampered = decoded.copy(gameHash = "f".repeat(64))
+        val envelope = response.copy(payload = StateResponseCodec.encode(tampered))
+
+        assertThrows(P2PMatchException.InvalidMessage::class.java) {
+            stale.receiveStateResponse(envelope)
+        }
+        assertEquals(originalHash, stale.history().gameHash())
+        assertEquals(0, stale.snapshot().moveCount)
+        assertEquals(0L, stale.snapshot().expectedIncomingSequence)
     }
 
     @Test
