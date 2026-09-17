@@ -119,6 +119,24 @@ class P2PMatchStateTest {
     }
 
     @Test
+    fun reconnectTransitionsThroughRecoveryAndBackToConnected() {
+        val w = whiteMachine()
+        val b = blackMachine()
+        w.createLocalMove(move(4, 1, 4, 3))
+        b.receive(w.createLocalMove(move(6, 0, 5, 2)))
+        w.markDisconnected()
+        assertEquals(MatchConnectionState.DISCONNECTED, w.connectionState())
+
+        val request = w.createReconnectRequest()
+        assertEquals(MatchConnectionState.RECOVERING, w.connectionState())
+        val response = b.createStateResponse(request)
+        w.receiveStateResponse(response)
+
+        assertEquals(MatchConnectionState.CONNECTED, w.connectionState())
+        assertEquals(b.history().gameHash(), w.history().gameHash())
+    }
+
+    @Test
     fun acknowledgementsTrackOutstandingMovesAndVerifyHash() {
         val w = whiteMachine()
         val b = blackMachine()
