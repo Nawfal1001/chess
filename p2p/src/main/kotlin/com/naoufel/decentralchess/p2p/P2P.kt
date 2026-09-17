@@ -124,7 +124,7 @@ object MoveMessageCodec {
 
     fun decode(payload: ByteArray): MoveMessage {
         val parts = payload.toString(StandardCharsets.UTF_8).split("|")
-        if (parts.size != 10 || parts[0] != VERSION) throw P2PMatchException.InvalidMessage("Malformed MOVE payload")
+        if (parts.size != 9 || parts[0] != VERSION) throw P2PMatchException.InvalidMessage("Malformed MOVE payload")
         fun coordinate(index: Int): Int = parts[index].toIntOrNull() ?: throw P2PMatchException.InvalidMessage("Invalid coordinate")
         val from = Square(coordinate(1), coordinate(2))
         val to = Square(coordinate(3), coordinate(4))
@@ -204,7 +204,7 @@ object StateResponseCodec {
 
     fun decode(payload: ByteArray): StateResponse {
         val parts = payload.toString(StandardCharsets.UTF_8).split("|")
-        if (parts.size != 9 || parts[0] != VERSION) throw P2PMatchException.InvalidMessage("Malformed STATE_RESPONSE payload")
+        if (parts.size != 10 || parts[0] != VERSION) throw P2PMatchException.InvalidMessage("Malformed STATE_RESPONSE payload")
         val baseSequence = parts[4].toLongOrNull() ?: throw P2PMatchException.InvalidMessage("Invalid base sequence")
         val moveCount = parts[5].toIntOrNull() ?: throw P2PMatchException.InvalidMessage("Invalid move count")
         val pgn = runCatching { String(java.util.Base64.getDecoder().decode(parts[9]), StandardCharsets.UTF_8) }.getOrElse {
@@ -300,7 +300,7 @@ class MatchStateMachine(
         if (remotePublicKeyBase64 != null && !EnvelopeVerifier.verify(envelope)) {
             throw P2PMatchException.InvalidMessage("Invalid MOVE signature")
         }
-        if (envelope.type != MessageType.MOVE) throw P2PMatchException.InvalidMessage("Expected MOVE, received ${${envelope.type}}")
+        if (envelope.type != MessageType.MOVE) throw P2PMatchException.InvalidMessage("Expected MOVE, received ${envelope.type}")
         if (envelope.sequence != expectedIncomingSequence) {
             throw P2PMatchException.InvalidSequence(expectedIncomingSequence, envelope.sequence)
         }
