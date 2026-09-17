@@ -1,5 +1,6 @@
 package com.naoufel.decentralchess.p2p
 
+import com.naoufel.decentralchess.chess.ChessNotation
 import com.naoufel.decentralchess.chess.GameHistory
 import com.naoufel.decentralchess.chess.Move
 import com.naoufel.decentralchess.chess.PieceType
@@ -141,6 +142,79 @@ object MoveMessageCodec {
     }
 }
 
+data class StateRequest(
+    val sessionId: String,
+    val matchId: String,
+    val expectedIncomingSequence: Long,
+    val currentGameHash: String
+) {
+    init {
+        require(sessionId.isNotBlank() && matchId.isNotBlank()) { "State request IDs must not be blank" }
+        require(expectedIncomingSequence >= 0) { "expectedIncomingSequence must be non-negative" }
+        require(currentGameHash.length == 64) { "currentGameHash must be SHA-256 hex" }
+    }
+}
+
+object StateRequestCodec {
+    private const val VERSION = "state-request-v1"
+
+    fun encode(request: StateRequest): ByteArray =
+        listOf(VERSION, request.sessionId, request.matchId, request.expectedIncomingSequence, request.currentGameHash)
+            .joinToString("|").toByteArray(StandardCharsets.UTF_8)
+
+    fun decode(payload: ByteArray): StateRequest {
+        val parts = payload.toString(StandardCharsets.UTF_8).split("|")
+        if (parts.size != 5 || parts[0] != VERSION) throw P2PMatchException.InvalidMessage("Malformed STATE_REQUEST payload")
+        val sequence = parts[3].toLongOrNull() ?: throw P2PMatchException.InvalidMessage("Invalid requested sequence")
+        return runCatching { StateRequest(parts[1], parts[2], sequence, parts[4]) }.getOrElse {
+            throw P2PMatchException.InvalidMessage("Invalid STATE_REQUEST fields")
+        }
+    }
+}
+
+data class StateResponse(
+    val sessionId: String,
+    val matchId: String,
+    val baseSequence: Long,
+    val moveCount: Int,
+    val initialFen: String,
+    val finalFen: String,
+    val gameHash: String,
+    val pgn: String
+) {
+    init {
+        require(sessionId.isNotBlank() && matchId.isNotBlank()) { "State response IDs must not be blank" }
+        require(baseSequence >= 0) { "baseSequence must be non-negative" }
+        require(moveCount >= 0) { "moveCount must be non-negative" }
+        require(gameHash.length == 64) { "gameHash must be SHA-256 hex" }
+        require(pgn.isNotBlank()) { "pgn must not be blank" }
+    }
+}
+
+object StateResponseCodec {
+    private const val VERSION = "state-response-v1"
+
+    fun encode(response: StateResponse): ByteArray {
+        val pgn = java.util.Base64.getEncoder().encodeToString(response.pgn.toByteArray(StandardCharsets.UTF_8))
+        return listOf(VERSION, response.sessionId, response.matchId, response.baseSequence, response.moveCount,
+            response.initialFen, response.finalFen, response.gameHash, pgn).joinToString("|")
+            .toByteArray(StandardCharsets.UTF_8)
+    }
+
+    fun decode(payload: ByteArray): StateResponse {
+        val parts = payload.toString(StandardCharsets.UTF_8).split("|")
+        if (parts.size != 9 || parts[0] != VERSION) throw P2PMatchException.InvalidMessage("Malformed STATE_RESPONSE payload")
+        val baseSequence = parts[3].toLongOrNull() ?: throw P2PMatchException.InvalidMessage("Invalid base sequence")
+        val moveCount = parts[4].toIntOrNull() ?: throw P2PMatchException.InvalidMessage("Invalid move count")
+        val pgn = runCatching { String(java.util.Base64.getDecoder().decode(parts[8]), StandardCharsets.UTF_8) }.getOrElse {
+            throw P2PMatchException.InvalidMessage("Invalid PGN encoding")
+        }
+        return runCatching { StateResponse(parts[1], parts[2], baseSequence, moveCount, parts[5], parts[6], parts[7], pgn) }.getOrElse {
+            throw P2PMatchException.InvalidMessage("Invalid STATE_RESPONSE fields")
+        }
+    }
+}
+
 data class MatchStateSnapshot(
     val sessionId: String,
     val localPeerId: PeerId,
@@ -196,6 +270,22 @@ class MatchStateMachine(
         return signed
     }
 
+    fun createStateRequest(): ProtocolEnvelope {
+        val request = StateRequest(sessionId, matchId, expectedIncomingSequence, history.gameHash())
+        return buildEnvelope(MessageType.STATE_REQUEST, StateRequestCodec.encode(request))
+    }
+
+    fun createStateResponse(requestEnvelope: ProtocolEnvelope): ProtocolEnvelope {
+        validateControlEnvelope(requestEnvelope, MessageType.STATE_REQUEST)
+        val request = StateRequestCodec.decode(requestEnvelope.payload)
+        if (request.sessionId != sessionId || request.matchId != matchId) {
+            throw P2PMatchException.InvalidMessage("STATE_REQUEST does not match this match")
+        }
+        val response = StateResponse(sessionId, matchId, 0, history.moveHistory.size,
+            history.initialPosition().toFen(), history.current.toFen(), history.gameHash(), ChessNotation.exportPgn(history))
+        return buildEnvelope(MessageType.STATE_RESPONSE, StateResponseCodec.encode(response))
+    }
+
     fun receive(envelope: ProtocolEnvelope): MoveMessage {
         if (envelope.sessionId != sessionId) throw P2PMatchException.InvalidSession(sessionId, envelope.sessionId)
         if (envelope.matchId != matchId) throw P2PMatchException.InvalidMessage("Invalid match ID")
@@ -206,7 +296,7 @@ class MatchStateMachine(
         if (remotePublicKeyBase64 != null && !EnvelopeVerifier.verify(envelope)) {
             throw P2PMatchException.InvalidMessage("Invalid MOVE signature")
         }
-        if (envelope.type != MessageType.MOVE) throw P2PMatchException.InvalidMessage("Expected MOVE, received \${envelope.type}")
+        if (envelope.type != MessageType.MOVE) throw P2PMatchException.InvalidMessage("Expected MOVE, received ${${envelope.type}}")
         if (envelope.sequence != expectedIncomingSequence) {
             throw P2PMatchException.InvalidSequence(expectedIncomingSequence, envelope.sequence)
         }
@@ -233,6 +323,69 @@ class MatchStateMachine(
         }
         expectedIncomingSequence++
         return message
+    }
+
+    fun receiveStateResponse(envelope: ProtocolEnvelope): StateResponse {
+        validateControlEnvelope(envelope, MessageType.STATE_RESPONSE)
+        val response = StateResponseCodec.decode(envelope.payload)
+        if (response.sessionId != sessionId || response.matchId != matchId) {
+            throw P2PMatchException.InvalidMessage("STATE_RESPONSE does not match this match")
+        }
+        if (response.baseSequence != 0L) {
+            throw P2PMatchException.InvalidMessage("Unsupported state response base sequence")
+        }
+
+        val recovered = runCatching { ChessNotation.importPgn(response.pgn) }.getOrElse {
+            throw P2PMatchException.InvalidMessage("STATE_RESPONSE PGN replay failed")
+        }
+        if (recovered.initialPosition().toFen() != response.initialFen) {
+            throw P2PMatchException.InvalidMessage("STATE_RESPONSE initial FEN mismatch")
+        }
+        if (recovered.current.toFen() != response.finalFen) {
+            throw P2PMatchException.InvalidMessage("STATE_RESPONSE final FEN mismatch")
+        }
+        if (recovered.gameHash() != response.gameHash) {
+            throw P2PMatchException.InvalidMessage("STATE_RESPONSE game hash mismatch")
+        }
+        if (recovered.moveHistory.size != response.moveCount) {
+            throw P2PMatchException.MoveCountMismatch(recovered.moveHistory.size, response.moveCount)
+        }
+        if (recovered.initialPosition().toFen() != history.initialPosition().toFen()) {
+            throw P2PMatchException.InvalidMessage("Cannot replace match with a different initial position")
+        }
+
+        while (history.moveHistory.isNotEmpty()) history.undo()
+        recovered.moveHistory.forEach { history.play(it.move) }
+        if (history.gameHash() != response.gameHash || history.current.toFen() != response.finalFen) {
+            throw P2PMatchException.InvalidMessage("Recovered local state failed final verification")
+        }
+        expectedIncomingSequence = response.moveCount.toLong()
+        return response
+    }
+
+    private fun buildEnvelope(type: MessageType, payload: ByteArray): ProtocolEnvelope {
+        val unsigned = ProtocolEnvelope(
+            P2PProtocol.VERSION, UUID.randomUUID().toString(), sessionId, matchId, localPeerId.value,
+            type, nextOutgoingSequence, payload, localIdentity?.publicKeyBase64
+        )
+        val signed = if (localIdentity == null) unsigned else unsigned.copy(signatureBase64 = localIdentity.sign(unsigned))
+        nextOutgoingSequence++
+        return signed
+    }
+
+    private fun validateControlEnvelope(envelope: ProtocolEnvelope, expectedType: MessageType) {
+        if (envelope.sessionId != sessionId) throw P2PMatchException.InvalidSession(sessionId, envelope.sessionId)
+        if (envelope.matchId != matchId) throw P2PMatchException.InvalidMessage("Invalid match ID")
+        if (envelope.senderPeerId != remotePeerId.value) throw P2PMatchException.InvalidSender(remotePeerId.value, envelope.senderPeerId)
+        if (remotePublicKeyBase64 != null && envelope.senderPublicKeyBase64 != remotePublicKeyBase64) {
+            throw P2PMatchException.InvalidMessage("Unexpected sender public key")
+        }
+        if (remotePublicKeyBase64 != null && !EnvelopeVerifier.verify(envelope)) {
+            throw P2PMatchException.InvalidMessage("Invalid $expectedType signature")
+        }
+        if (envelope.type != expectedType) {
+            throw P2PMatchException.InvalidMessage("Expected $expectedType, received ${envelope.type}")
+        }
     }
 }
 
