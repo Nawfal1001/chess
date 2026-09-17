@@ -207,7 +207,7 @@ object StateResponseCodec {
         if (parts.size != 9 || parts[0] != VERSION) throw P2PMatchException.InvalidMessage("Malformed STATE_RESPONSE payload")
         val baseSequence = parts[4].toLongOrNull() ?: throw P2PMatchException.InvalidMessage("Invalid base sequence")
         val moveCount = parts[5].toIntOrNull() ?: throw P2PMatchException.InvalidMessage("Invalid move count")
-        val pgn = runCatching { String(java.util.Base64.getDecoder().decode(parts[8]), StandardCharsets.UTF_8) }.getOrElse {
+        val pgn = runCatching { String(java.util.Base64.getDecoder().decode(parts[9]), StandardCharsets.UTF_8) }.getOrElse {
             throw P2PMatchException.InvalidMessage("Invalid PGN encoding")
         }
         return runCatching { StateResponse(parts[1], parts[2], parts[3], baseSequence, moveCount, parts[6], parts[7], parts[8], pgn) }.getOrElse {
