@@ -39,12 +39,11 @@ class SessionHandshakeTest {
         val helloB = b.startHello()
         assertEquals(SessionPhase.HELLO_SENT, b.phase())
 
-        val offer = b.onEnvelope(helloW).single()
-        assertEquals(MessageType.MATCH_OFFER, offer.type)
+        b.onEnvelope(helloW)
         assertEquals(SessionPhase.HELLO_RECEIVED, b.phase())
 
-        val secondOffer = w.onEnvelope(helloB).single()
-        assertEquals(MessageType.MATCH_OFFER, secondOffer.type)
+        val offer = w.onEnvelope(helloB).single()
+        assertEquals(MessageType.MATCH_OFFER, offer.type)
         val accepted = b.onEnvelope(offer).single()
         assertEquals(MessageType.MATCH_ACCEPT, accepted.type)
         assertEquals(SessionPhase.READY, b.phase())
