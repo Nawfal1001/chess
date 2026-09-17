@@ -52,6 +52,34 @@ class P2PMatchStateTest {
     }
 
     @Test
+    fun sessionControllerRunsVerifiedMovesAndAcksAcrossTransport() = runTest {
+        val white = PeerId("white-controller")
+        val black = PeerId("black-controller")
+        val whiteTransport = InMemoryPeerTransport(white)
+        val blackTransport = InMemoryPeerTransport(black)
+        whiteTransport.pairWith(blackTransport)
+
+        val whiteState = MatchStateMachine("session-controller", white, black, Side.WHITE, "match-controller")
+        val blackState = MatchStateMachine("session-controller", black, white, Side.BLACK, "match-controller")
+        val whiteController = P2PSessionController(whiteState, whiteTransport)
+        val blackController = P2PSessionController(blackState, blackTransport)
+        whiteController.attach()
+        blackController.attach()
+
+        whiteController.connect()
+        whiteController.sendMove(move(4, 1, 4, 3))
+        blackController.sendMove(move(4, 6, 4, 4))
+
+        assertEquals(whiteState.history().gameHash(), blackState.history().gameHash())
+        assertEquals(2, whiteState.history().moveHistory.size)
+        assertEquals(2, blackState.history().moveHistory.size)
+        assertEquals(0, whiteState.pendingAcknowledgementCount())
+        assertEquals(0, blackState.pendingAcknowledgementCount())
+        assertEquals(MatchConnectionState.CONNECTED, whiteState.connectionState())
+        assertEquals(MatchConnectionState.CONNECTED, blackState.connectionState())
+    }
+
+    @Test
     fun legalMovesKeepBothPeersOnIdenticalDeterministicState() {
         val w = whiteMachine()
         val b = blackMachine()
