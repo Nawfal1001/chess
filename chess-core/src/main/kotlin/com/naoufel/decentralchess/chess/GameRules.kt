@@ -7,11 +7,14 @@ enum class GameStatus { ONGOING, CHECK, CHECKMATE, STALEMATE, DRAW_REPETITION, D
 data class HashedMove(val move: Move, val positionHash: String)
 
 class GameHistory(initial: Position = Position.initial()) {
+    private val initialPosition = initial
     private val positions = mutableListOf(initial)
     private val moves = mutableListOf<HashedMove>()
 
     val current: Position get() = positions.last()
     val moveHistory: List<HashedMove> get() = moves.toList()
+
+    fun initialPosition(): Position = initialPosition
 
     fun play(move: Move): Position {
         val next = current.apply(move)
@@ -35,12 +38,10 @@ class GameHistory(initial: Position = Position.initial()) {
     fun status(): GameStatus = current.gameStatus(repetitionCount())
 
     fun gameHash(): String {
-        var hash = sha256(currentStartHash())
+        var hash = sha256(initialPosition.stableHash())
         for (entry in moves) hash = sha256("$hash:${moveKey(entry.move)}:${entry.positionHash}")
         return hash
     }
-
-    private fun currentStartHash(): String = positions.first().stableHash()
 
     private fun moveKey(m: Move): String = "${m.from.file},${m.from.rank}-${m.to.file},${m.to.rank}-${m.promotion?.name ?: "-"}"
 
