@@ -4,6 +4,7 @@ import com.naoufel.decentralchess.chess.Move
 import com.naoufel.decentralchess.chess.Side
 import com.naoufel.decentralchess.chess.Square
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
 import org.junit.Test
@@ -12,14 +13,16 @@ import java.util.Base64
 class SessionHandshakeTest {
     private val session = "handshake-session"
     private val match = "handshake-match"
-    private val white = PeerId("a-white")
-    private val black = PeerId("b-black")
+    private val whiteKey = Base64.getEncoder().encodeToString("key-white".encodeToByteArray())
+    private val blackKey = Base64.getEncoder().encodeToString("key-black".encodeToByteArray())
+    private val white = HandshakeCrypto.peerIdForPublicKey(whiteKey)
+    private val black = HandshakeCrypto.peerIdForPublicKey(blackKey)
 
-    private fun identity(peer: PeerId) = HandshakeIdentity(
-        peer,
-        Base64.getEncoder().encodeToString(("key-" + peer.value).encodeToByteArray()),
-        { payload -> payload }
-    )
+    private fun identity(peer: PeerId) = when (peer) {
+        white -> HandshakeIdentity(peer, whiteKey, { payload -> payload })
+        black -> HandshakeIdentity(peer, blackKey, { payload -> payload })
+        else -> error("Unknown test peer")
+    }
 
     private fun verifier(expectedPeer: PeerId): (ProtocolEnvelope) -> Boolean = { envelope ->
         envelope.senderPeerId == expectedPeer.value &&
@@ -65,6 +68,16 @@ class SessionHandshakeTest {
     }
 
     @Test
+    fun publicKeyPeerIdBindingIsEnforced() {
+        val wi = identity(white)
+        val bi = identity(black)
+        val w = SessionHandshake(white, black, session, match, Side.WHITE, com.naoufel.decentralchess.chess.GameHistory().initialPosition().toFen(), wi, verifier(black)) { byteArrayOf(1) }
+        val b = SessionHandshake(black, white, session, match, Side.BLACK, com.naoufel.decentralchess.chess.GameHistory().initialPosition().toFen(), bi, verifier(white)) { byteArrayOf(2) }
+        val hello = w.startHello().copy(senderPeerId = black.value, senderPublicKeyBase64 = wi.publicKeyBase64)
+        assertThrows(P2PMatchException.InvalidSender::class.java) { b.onEnvelope(hello) }
+    }
+
+    @Test
     fun tamperedHandshakeSignatureIsRejected() {
         val wi = identity(white)
         val bi = identity(black)
@@ -104,5 +117,22 @@ class SessionHandshakeTest {
         bc.sendMove(Move(Square(4, 6), Square(4, 4)))
         assertEquals(2, whiteState.history().moveHistory.size)
         assertEquals(whiteState.history().gameHash(), blackState.history().gameHash())
+    }
+
+    @Test
+    fun readySessionRejectsUnexpectedHandshakeMessages() = runTest {
+        val whiteTransport = InMemoryPeerTransport(white)
+        val blackTransport = InMemoryPeerTransport(black)
+        whiteTransport.pairWith(blackTransport)
+        val whiteState = MatchStateMachine(session, white, black, Side.WHITE, match)
+        val blackState = MatchStateMachine(session, black, white, Side.BLACK, match)
+        val wc = AuthenticatedP2PSessionController(whiteState, whiteTransport, identity(white), verifier(black))
+        val bc = AuthenticatedP2PSessionController(blackState, blackTransport, identity(black), verifier(white))
+        wc.attach(); bc.attach(); wc.connect()
+        val lateHello = SessionHandshake(black, white, session, match, Side.BLACK,
+            blackState.history().initialPosition().toFen(), identity(black), verifier(white)) { byteArrayOf(7) }.startHello()
+        assertThrows(P2PMatchException.InvalidMessage::class.java) {
+            runBlocking { wc.onPayload(black, ProtocolEnvelopeCodec.encode(lateHello)) }
+        }
     }
 }
