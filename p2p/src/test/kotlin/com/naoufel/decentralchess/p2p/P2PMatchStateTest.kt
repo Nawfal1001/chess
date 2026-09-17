@@ -130,12 +130,14 @@ class P2PMatchStateTest {
         val requestPayload = StateRequestCodec.decode(request.payload)
         assertEquals(0L, requestPayload.expectedIncomingSequence)
         assertEquals(stale.history().gameHash(), requestPayload.currentGameHash)
+        assertEquals(0L, stale.snapshot().nextOutgoingSequence)
 
         val response = w.createStateResponse(request)
         val decoded = StateResponseCodec.decode(response.payload)
         assertEquals(request.messageId, decoded.requestMessageId)
         assertEquals(w.history().gameHash(), decoded.gameHash)
         assertEquals(w.history().current.toFen(), decoded.finalFen)
+        assertEquals(1L, w.snapshot().nextOutgoingSequence)
 
         stale.receiveStateResponse(response)
         assertEquals(w.history().gameHash(), stale.history().gameHash())
