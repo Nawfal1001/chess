@@ -42,14 +42,11 @@ object ChessNotation {
         if (normalized == "O-O-O") return legal.single { it.from.file == 4 && it.to.file == 2 }
 
         val match = SAN_PATTERN.matchEntire(normalized) ?: error("Invalid SAN: $san")
-        val pieceType = when (val letter = match.groups["piece"]?.value) {
-            null, "" -> PieceType.PAWN
-            else -> pieceTypeFromLetter(letter[0])
-        }
+        val pieceType = match.groups["piece"]?.value?.let { pieceTypeFromLetter(it[0]) } ?: PieceType.PAWN
         val disambiguation = match.groups["disambiguation"]?.value.orEmpty()
         val capture = match.groups["capture"]?.value == "x"
         val to = squareFromName(match.groups["to"]!!.value)
-        val promotion = match.groups["promotion"]?.value?.let { pieceTypeFromLetter(it[1]) }
+        val promotion = match.groups["promotion"]?.value?.let { pieceTypeFromLetter(it.last()) }
 
         val candidates = legal.filter { move ->
             val piece = position.pieceAt(move.from) ?: return@filter false
@@ -68,35 +65,34 @@ object ChessNotation {
     }
 
     fun exportPgn(history: GameHistory, tags: Map<String, String> = emptyMap()): String {
-        val tagLines = tags.entries.joinToString("\n") { "[${it.key} \"${escapeTag(it.value)}\"]" }
-        val initial = history.initialPosition()
+        val allTags = LinkedHashMap(tags)
+        allTags.putIfAbsent("Result", resultToken(history))
+        val tagLines = allTags.entries.joinToString("\n") { "[${it.key} \"${escapeTag(it.value)}\"]" }
         val tokens = buildList {
-            var position = initial
-            history.moveHistory.forEachIndexed { index, hashed ->
+            var position = history.initialPosition()
+            history.moveHistory.forEach { hashed ->
                 if (position.sideToMove == Side.WHITE) add("${position.moveNumber}.")
-                else if (index == 0) add("${position.moveNumber}...")
+                else if (position.moveNumber == 1 && size == 0) add("${position.moveNumber}...")
                 add(toSan(position, hashed.move))
                 position = position.apply(hashed.move)
             }
-            add(resultToken(history.status()))
+            add(resultToken(history))
         }
-        return buildString {
-            if (tagLines.isNotEmpty()) append(tagLines).append("\n\n")
-            append(tokens.joinToString(" "))
-        }
+        return "$tagLines\n\n${tokens.joinToString(" ")}"
     }
 
     fun importPgn(pgn: String): GameHistory {
         val withoutTags = pgn.replace(TAG_PATTERN, " ")
             .replace(COMMENT_PATTERN, " ")
             .replace(Regex("\\{[^}]*}"), " ")
+            .replace(Regex("\\d+\\.(?:\\.\\.)?"), " ")
         val tokens = withoutTags.split(Regex("\\s+")).filter { it.isNotBlank() }
         val history = GameHistory()
         tokens.forEach { raw ->
             val token = raw.trim()
-            if (token.matches(Regex("\\d+\\.(\\.\\.)?")) || token in RESULT_TOKENS) return@forEach
+            if (token in RESULT_TOKENS) return@forEach
             val cleaned = token.replace(Regex("[!?]+$"), "")
-            history.play(parseSan(history.current, cleaned))
+            if (cleaned.isNotEmpty()) history.play(parseSan(history.current, cleaned))
         }
         return history
     }
@@ -134,8 +130,9 @@ object ChessNotation {
 
     private fun escapeTag(value: String): String = value.replace("\\", "\\\\").replace("\"", "\\\"")
 
-    private fun resultToken(status: GameStatus): String = when (status) {
-        GameStatus.CHECKMATE -> "1-0" // Caller may override with Result tag for richer PGN metadata.
+    private fun resultToken(history: GameHistory): String = when (history.status()) {
+        GameStatus.CHECKMATE -> if (history.current.sideToMove == Side.BLACK) "1-0" else "0-1"
+        GameStatus.STALEMATE, GameStatus.DRAW_REPETITION, GameStatus.DRAW_FIFTY_MOVE, GameStatus.DRAW_INSUFFICIENT_MATERIAL -> "1/2-1/2"
         else -> "*"
     }
 
@@ -143,19 +140,4 @@ object ChessNotation {
     private val TAG_PATTERN = Regex("(?m)^\\[[^\\n]*]\\s*$")
     private val COMMENT_PATTERN = Regex(";[^\\n]*")
     private val RESULT_TOKENS = setOf("1-0", "0-1", "1/2-1/2", "*")
-}
-
-/** Initial position is exposed for notation without changing the mutable history API. */
-fun GameHistory.initialPosition(): Position = if (moveHistory.isEmpty()) current else {
-    var position = current
-    repeat(moveHistory.size) { position = position.undoLast(moveHistory.size - it) }
-    position
-}
-
-private fun Position.undoLast(count: Int): Position {
-    // Reconstructing from the standard initial position keeps notation deterministic.
-    var p = Position.initial()
-    val history = emptyList<Move>()
-    if (count <= 0) return p
-    return p
 }
