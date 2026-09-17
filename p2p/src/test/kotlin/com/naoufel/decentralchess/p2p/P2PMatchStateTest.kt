@@ -223,6 +223,24 @@ class P2PMatchStateTest {
     }
 
     @Test
+    fun protocolEnvelopeWireCodecRoundTripsSignedFields() {
+        val original = whiteMachine().createLocalMove(move(4, 1, 4, 3))
+        val decoded = ProtocolEnvelopeCodec.decode(ProtocolEnvelopeCodec.encode(original))
+
+        assertEquals(original.version, decoded.version)
+        assertEquals(original.messageId, decoded.messageId)
+        assertEquals(original.sessionId, decoded.sessionId)
+        assertEquals(original.matchId, decoded.matchId)
+        assertEquals(original.senderPeerId, decoded.senderPeerId)
+        assertEquals(original.type, decoded.type)
+        assertEquals(original.sequence, decoded.sequence)
+        assertEquals(original.payload.toList(), decoded.payload.toList())
+        assertEquals(original.senderPublicKeyBase64, decoded.senderPublicKeyBase64)
+        assertEquals(original.signatureBase64, decoded.signatureBase64)
+        assertEquals(original.canonicalBytes().toList(), decoded.canonicalBytes().toList())
+    }
+
+    @Test
     fun moveCodecRoundTripsPromotionAndCoordinates() {
         val message = MoveMessage(
             move(0, 6, 0, 7, PieceType.QUEEN),
