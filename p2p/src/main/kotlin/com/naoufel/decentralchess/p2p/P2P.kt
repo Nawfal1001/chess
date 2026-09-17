@@ -63,6 +63,66 @@ class InMemoryPeerTransport(
     }
 }
 
+
+class P2PSessionController(
+    private val state: MatchStateMachine,
+    private val transport: PeerTransport
+) : PeerTransportListener {
+    init {
+        require(state.localPeerId != state.remotePeerId) { "A session cannot connect a peer to itself" }
+    }
+
+    fun attach() {
+        if (transport is InMemoryPeerTransport) transport.setListener(this)
+    }
+
+    suspend fun connect() {
+        transport.connect(state.remotePeerId)
+    }
+
+    suspend fun sendMove(move: Move): ProtocolEnvelope {
+        val envelope = state.createLocalMove(move)
+        transport.send(state.remotePeerId, ProtocolEnvelopeCodec.encode(envelope))
+        return envelope
+    }
+
+    suspend fun reconnect() {
+        state.markDisconnected()
+        transport.connect(state.remotePeerId)
+        val request = state.createReconnectRequest()
+        transport.send(state.remotePeerId, ProtocolEnvelopeCodec.encode(request))
+    }
+
+    override suspend fun onConnected(peer: PeerId) {
+        require(peer == state.remotePeerId) { "Unexpected connected peer" }
+    }
+
+    override suspend fun onPayload(peer: PeerId, payload: ByteArray) {
+        if (peer != state.remotePeerId) {
+            throw P2PMatchException.InvalidSender(state.remotePeerId.value, peer.value)
+        }
+        val envelope = ProtocolEnvelopeCodec.decode(payload)
+        when (envelope.type) {
+            MessageType.MOVE -> {
+                state.receive(envelope)
+                val ack = state.createAck(envelope)
+                transport.send(state.remotePeerId, ProtocolEnvelopeCodec.encode(ack))
+            }
+            MessageType.ACK -> state.receiveAck(envelope)
+            MessageType.STATE_REQUEST -> {
+                val response = state.createStateResponse(envelope)
+                transport.send(state.remotePeerId, ProtocolEnvelopeCodec.encode(response))
+            }
+            MessageType.STATE_RESPONSE -> state.receiveStateResponse(envelope)
+            else -> throw P2PMatchException.InvalidMessage("Unsupported session message: \${envelope.type}")
+        }
+    }
+
+    override suspend fun onDisconnected(peer: PeerId) {
+        if (peer == state.remotePeerId) state.markDisconnected()
+    }
+}
+
 enum class MessageType { HELLO, MATCH_OFFER, MATCH_ACCEPT, MOVE, ACK, HASH_CHECKPOINT, MATCH_FINAL, STATE_REQUEST, STATE_RESPONSE }
 
 data class ProtocolEnvelope(
