@@ -24,6 +24,7 @@ data class ProtocolEnvelope(
     val version: Int,
     val messageId: String,
     val sessionId: String,
+    val matchId: String,
     val senderPeerId: String,
     val type: MessageType,
     val sequence: Long,
@@ -33,7 +34,7 @@ data class ProtocolEnvelope(
 ) {
     init {
         require(version == 1) { "Unsupported P2P protocol version" }
-        require(messageId.isNotBlank() && sessionId.isNotBlank()) { "IDs must not be blank" }
+        require(messageId.isNotBlank() && sessionId.isNotBlank() && matchId.isNotBlank()) { "IDs must not be blank" }
         require(senderPeerId.isNotBlank()) { "senderPeerId must not be blank" }
         require(sequence >= 0) { "sequence must be non-negative" }
     }
@@ -42,7 +43,7 @@ data class ProtocolEnvelope(
         val payloadHash = MessageDigest.getInstance("SHA-256").digest(payload)
             .joinToString("") { "%02x".format(it) }
         return listOf(
-            "p2p-envelope-v1", version.toString(), messageId, sessionId, senderPeerId,
+            "p2p-envelope-v1", version.toString(), messageId, sessionId, matchId, senderPeerId,
             type.name, sequence.toString(), senderPublicKeyBase64 ?: "-", payloadHash
         ).joinToString("\n") { it.length.toString() + ":" + it }
             .toByteArray(StandardCharsets.UTF_8)
@@ -176,25 +177,28 @@ class MatchStateMachine(
         if (history.current.sideToMove != localSide) {
             throw P2PMatchException.WrongTurn(localSide, history.current.sideToMove)
         }
+        if (localIdentity != null && localIdentity.peerId != localPeerId) {
+            throw P2PMatchException.InvalidSender(localPeerId.value, localIdentity.peerId.value)
+        }
         val previousHash = history.gameHash()
         runCatching { history.play(move) }.getOrElse { throw P2PMatchException.IllegalMove(move) }
         val resultingHash = history.gameHash()
         val message = MoveMessage(move, previousHash, resultingHash, history.moveHistory.size)
-        val sequence = nextOutgoingSequence++
+        val sequence = nextOutgoingSequence
         val unsigned = ProtocolEnvelope(
-            P2PProtocol.VERSION, UUID.randomUUID().toString(), sessionId, localPeerId.value,
+            P2PProtocol.VERSION, UUID.randomUUID().toString(), sessionId, matchId, localPeerId.value,
             MessageType.MOVE, sequence, MoveMessageCodec.encode(message),
             localIdentity?.publicKeyBase64
         )
-        if (localIdentity != null && localIdentity.peerId != localPeerId) {
-            throw P2PMatchException.InvalidSender(localPeerId.value, localIdentity.peerId.value)
-        }
-        return if (localIdentity == null) unsigned else
+        val signed = if (localIdentity == null) unsigned else
             unsigned.copy(signatureBase64 = localIdentity.sign(unsigned))
+        nextOutgoingSequence++
+        return signed
     }
 
     fun receive(envelope: ProtocolEnvelope): MoveMessage {
         if (envelope.sessionId != sessionId) throw P2PMatchException.InvalidSession(sessionId, envelope.sessionId)
+        if (envelope.matchId != matchId) throw P2PMatchException.InvalidMessage("Invalid match ID")
         if (envelope.senderPeerId != remotePeerId.value) throw P2PMatchException.InvalidSender(remotePeerId.value, envelope.senderPeerId)
         if (remotePublicKeyBase64 != null && envelope.senderPublicKeyBase64 != remotePublicKeyBase64) {
             throw P2PMatchException.InvalidMessage("Unexpected sender public key")
