@@ -16,12 +16,14 @@ object ChessNotation {
         val prefix = if (piece.type == PieceType.PAWN) {
             if (capture) "${('a'.code + move.from.file).toChar()}x" else ""
         } else {
-            val sameDestination = position.legalMoves()
-                .filter { it.to == move.to && it != move && position.pieceAt(it.from)?.type == piece.type }
+            val alternativeSources = position.legalMoves()
+                .filter { it.to == move.to && it.from != move.from && position.pieceAt(it.from)?.type == piece.type }
+                .map { it.from }
+                .distinct()
             val disambiguation = when {
-                sameDestination.isEmpty() -> ""
-                sameDestination.none { it.from.file == move.from.file } -> "${('a'.code + move.from.file).toChar()}"
-                sameDestination.none { it.from.rank == move.from.rank } -> "${move.from.rank + 1}"
+                alternativeSources.isEmpty() -> ""
+                alternativeSources.none { it.file == move.from.file } -> "${('a'.code + move.from.file).toChar()}"
+                alternativeSources.none { it.rank == move.from.rank } -> "${move.from.rank + 1}"
                 else -> squareName(move.from)
             }
             "${pieceLetter(piece.type)}$disambiguation${if (capture) "x" else ""}"
