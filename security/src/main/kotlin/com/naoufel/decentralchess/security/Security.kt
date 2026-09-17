@@ -24,10 +24,14 @@ data class SignedGameRecord(
         playerId, publicKeyBase64, initialFen, finalFen, gameHash, pgn
     ).toByteArray(StandardCharsets.UTF_8)
 
-    fun verify(): Boolean {
+    fun verify(): Boolean = runCatching {
         val signature = Base64.getDecoder().decode(signatureBase64)
-        return AndroidKeystoreIdentityProvider.verify(canonicalPayload(), signature, publicKeyBase64)
-    }
+        if (!AndroidKeystoreIdentityProvider.verify(canonicalPayload(), signature, publicKeyBase64)) return false
+        val replayed = ChessNotation.importPgn(pgn)
+        replayed.initialPosition().toFen() == initialFen &&
+            replayed.current.toFen() == finalFen &&
+            replayed.gameHash() == gameHash
+    }.getOrDefault(false)
 
     companion object {
         fun create(history: GameHistory, identityProvider: IdentityProvider): SignedGameRecord {
