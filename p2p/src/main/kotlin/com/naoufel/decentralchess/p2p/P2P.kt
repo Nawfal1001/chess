@@ -372,13 +372,13 @@ class MatchStateMachine(
     }
 
     private fun buildEnvelope(type: MessageType, payload: ByteArray): ProtocolEnvelope {
+        // Envelope sequence is the deterministic MOVE stream sequence. Control messages
+        // use message IDs/request bindings for replay correlation and do not consume move sequence.
         val unsigned = ProtocolEnvelope(
             P2PProtocol.VERSION, UUID.randomUUID().toString(), sessionId, matchId, localPeerId.value,
-            type, nextOutgoingSequence, payload, localIdentity?.publicKeyBase64
+            type, 0L, payload, localIdentity?.publicKeyBase64
         )
-        val signed = if (localIdentity == null) unsigned else unsigned.copy(signatureBase64 = localIdentity.sign(unsigned))
-        nextOutgoingSequence++
-        return signed
+        return if (localIdentity == null) unsigned else unsigned.copy(signatureBase64 = localIdentity.sign(unsigned))
     }
 
     private fun validateControlEnvelope(envelope: ProtocolEnvelope, expectedType: MessageType) {
