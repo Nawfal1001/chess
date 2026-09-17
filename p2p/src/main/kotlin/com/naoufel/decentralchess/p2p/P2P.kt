@@ -124,7 +124,7 @@ object MoveMessageCodec {
 
     fun decode(payload: ByteArray): MoveMessage {
         val parts = payload.toString(StandardCharsets.UTF_8).split("|")
-        if (parts.size != 9 || parts[0] != VERSION) throw P2PMatchException.InvalidMessage("Malformed MOVE payload")
+        if (parts.size != 10 || parts[0] != VERSION) throw P2PMatchException.InvalidMessage("Malformed MOVE payload")
         fun coordinate(index: Int): Int = parts[index].toIntOrNull() ?: throw P2PMatchException.InvalidMessage("Invalid coordinate")
         val from = Square(coordinate(1), coordinate(2))
         val to = Square(coordinate(3), coordinate(4))
@@ -175,6 +175,7 @@ object StateRequestCodec {
 data class StateResponse(
     val sessionId: String,
     val matchId: String,
+    val requestMessageId: String,
     val baseSequence: Long,
     val moveCount: Int,
     val initialFen: String,
@@ -183,7 +184,7 @@ data class StateResponse(
     val pgn: String
 ) {
     init {
-        require(sessionId.isNotBlank() && matchId.isNotBlank()) { "State response IDs must not be blank" }
+        require(sessionId.isNotBlank() && matchId.isNotBlank() && requestMessageId.isNotBlank()) { "State response IDs must not be blank" }
         require(baseSequence >= 0) { "baseSequence must be non-negative" }
         require(moveCount >= 0) { "moveCount must be non-negative" }
         require(gameHash.length == 64) { "gameHash must be SHA-256 hex" }
@@ -196,7 +197,7 @@ object StateResponseCodec {
 
     fun encode(response: StateResponse): ByteArray {
         val pgn = java.util.Base64.getEncoder().encodeToString(response.pgn.toByteArray(StandardCharsets.UTF_8))
-        return listOf(VERSION, response.sessionId, response.matchId, response.baseSequence, response.moveCount,
+        return listOf(VERSION, response.sessionId, response.matchId, response.requestMessageId, response.baseSequence, response.moveCount,
             response.initialFen, response.finalFen, response.gameHash, pgn).joinToString("|")
             .toByteArray(StandardCharsets.UTF_8)
     }
@@ -204,12 +205,12 @@ object StateResponseCodec {
     fun decode(payload: ByteArray): StateResponse {
         val parts = payload.toString(StandardCharsets.UTF_8).split("|")
         if (parts.size != 9 || parts[0] != VERSION) throw P2PMatchException.InvalidMessage("Malformed STATE_RESPONSE payload")
-        val baseSequence = parts[3].toLongOrNull() ?: throw P2PMatchException.InvalidMessage("Invalid base sequence")
-        val moveCount = parts[4].toIntOrNull() ?: throw P2PMatchException.InvalidMessage("Invalid move count")
+        val baseSequence = parts[4].toLongOrNull() ?: throw P2PMatchException.InvalidMessage("Invalid base sequence")
+        val moveCount = parts[5].toIntOrNull() ?: throw P2PMatchException.InvalidMessage("Invalid move count")
         val pgn = runCatching { String(java.util.Base64.getDecoder().decode(parts[8]), StandardCharsets.UTF_8) }.getOrElse {
             throw P2PMatchException.InvalidMessage("Invalid PGN encoding")
         }
-        return runCatching { StateResponse(parts[1], parts[2], baseSequence, moveCount, parts[5], parts[6], parts[7], pgn) }.getOrElse {
+        return runCatching { StateResponse(parts[1], parts[2], parts[3], baseSequence, moveCount, parts[6], parts[7], parts[8], pgn) }.getOrElse {
             throw P2PMatchException.InvalidMessage("Invalid STATE_RESPONSE fields")
         }
     }
@@ -239,6 +240,7 @@ class MatchStateMachine(
     private val history = initialHistory
     private var expectedIncomingSequence = 0L
     private var nextOutgoingSequence = 0L
+    private var pendingStateRequestMessageId: String? = null
 
     fun history(): GameHistory = history
 
@@ -272,7 +274,9 @@ class MatchStateMachine(
 
     fun createStateRequest(): ProtocolEnvelope {
         val request = StateRequest(sessionId, matchId, expectedIncomingSequence, history.gameHash())
-        return buildEnvelope(MessageType.STATE_REQUEST, StateRequestCodec.encode(request))
+        val envelope = buildEnvelope(MessageType.STATE_REQUEST, StateRequestCodec.encode(request))
+        pendingStateRequestMessageId = envelope.messageId
+        return envelope
     }
 
     fun createStateResponse(requestEnvelope: ProtocolEnvelope): ProtocolEnvelope {
@@ -281,7 +285,7 @@ class MatchStateMachine(
         if (request.sessionId != sessionId || request.matchId != matchId) {
             throw P2PMatchException.InvalidMessage("STATE_REQUEST does not match this match")
         }
-        val response = StateResponse(sessionId, matchId, 0, history.moveHistory.size,
+        val response = StateResponse(sessionId, matchId, requestEnvelope.messageId, 0, history.moveHistory.size,
             history.initialPosition().toFen(), history.current.toFen(), history.gameHash(), ChessNotation.exportPgn(history))
         return buildEnvelope(MessageType.STATE_RESPONSE, StateResponseCodec.encode(response))
     }
@@ -331,6 +335,9 @@ class MatchStateMachine(
         if (response.sessionId != sessionId || response.matchId != matchId) {
             throw P2PMatchException.InvalidMessage("STATE_RESPONSE does not match this match")
         }
+        if (response.requestMessageId != pendingStateRequestMessageId) {
+            throw P2PMatchException.InvalidMessage("STATE_RESPONSE does not match an outstanding STATE_REQUEST")
+        }
         if (response.baseSequence != 0L) {
             throw P2PMatchException.InvalidMessage("Unsupported state response base sequence")
         }
@@ -360,6 +367,7 @@ class MatchStateMachine(
             throw P2PMatchException.InvalidMessage("Recovered local state failed final verification")
         }
         expectedIncomingSequence = response.moveCount.toLong()
+        pendingStateRequestMessageId = null
         return response
     }
 
