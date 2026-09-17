@@ -6,6 +6,7 @@ import com.naoufel.decentralchess.chess.Side
 import com.naoufel.decentralchess.chess.Square
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
+import kotlinx.coroutines.test.runTest
 import org.junit.Test
 
 class P2PMatchStateTest {
@@ -18,6 +19,37 @@ class P2PMatchStateTest {
 
     private fun move(fromFile: Int, fromRank: Int, toFile: Int, toRank: Int, promotion: PieceType? = null) =
         Move(Square(fromFile, fromRank), Square(toFile, toRank), promotion)
+
+    @Test
+    fun inMemoryTransportDeliversImmutablePayloadAndLifecycleEvents() = runTest {
+        val white = PeerId("white-transport")
+        val black = PeerId("black-transport")
+        val a = InMemoryPeerTransport(white)
+        val b = InMemoryPeerTransport(black)
+        a.pairWith(b)
+
+        val events = mutableListOf<String>()
+        b.setListener(object : PeerTransportListener {
+            override suspend fun onConnected(peer: PeerId) { events += "connected:${peer.value}" }
+            override suspend fun onPayload(peer: PeerId, payload: ByteArray) {
+                events += "payload:${peer.value}:${payload.decodeToString()}"
+                payload[0] = 'X'.code.toByte()
+            }
+            override suspend fun onDisconnected(peer: PeerId) { events += "disconnected:${peer.value}" }
+        })
+
+        a.connect(black)
+        val original = "wire-payload".encodeToByteArray()
+        a.send(black, original)
+        a.close(black)
+
+        assertEquals(listOf(
+            "connected:white-transport",
+            "payload:white-transport:wire-payload",
+            "disconnected:white-transport"
+        ), events)
+        assertEquals("wire-payload", original.decodeToString())
+    }
 
     @Test
     fun legalMovesKeepBothPeersOnIdenticalDeterministicState() {
