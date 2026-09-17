@@ -14,6 +14,7 @@ import java.util.UUID
 data class PeerId(val value: String)
 
 interface PeerTransport {
+    fun setListener(listener: PeerTransportListener)
     suspend fun connect(peer: PeerId)
     suspend fun send(peer: PeerId, payload: ByteArray)
     suspend fun close(peer: PeerId)
@@ -32,7 +33,7 @@ class InMemoryPeerTransport(
     private var listener: PeerTransportListener? = null
     private var remote: InMemoryPeerTransport? = null
 
-    fun setListener(listener: PeerTransportListener) {
+    override fun setListener(listener: PeerTransportListener) {
         this.listener = listener
     }
 
@@ -44,7 +45,7 @@ class InMemoryPeerTransport(
 
     override suspend fun connect(peer: PeerId) {
         val target = remote ?: error("Transport is not paired")
-        require(target.localPeer == peer) { "Unknown peer: \${peer.value}" }
+        require(target.localPeer == peer) { "Unknown peer: ${peer.value}" }
         listener?.onConnected(peer)
         target.listener?.onConnected(localPeer)
     }
@@ -73,7 +74,7 @@ class P2PSessionController(
     }
 
     fun attach() {
-        if (transport is InMemoryPeerTransport) transport.setListener(this)
+        transport.setListener(this)
     }
 
     suspend fun connect() {
@@ -114,7 +115,7 @@ class P2PSessionController(
                 transport.send(state.remotePeerId, ProtocolEnvelopeCodec.encode(response))
             }
             MessageType.STATE_RESPONSE -> state.receiveStateResponse(envelope)
-            else -> throw P2PMatchException.InvalidMessage("Unsupported session message: \${envelope.type}")
+            else -> throw P2PMatchException.InvalidMessage("Unsupported session message: ${envelope.type}")
         }
     }
 
