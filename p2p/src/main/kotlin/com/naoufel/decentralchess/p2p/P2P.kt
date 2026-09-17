@@ -126,6 +126,9 @@ class P2PSessionController(
 
 enum class MessageType { HELLO, MATCH_OFFER, MATCH_ACCEPT, MOVE, ACK, HASH_CHECKPOINT, MATCH_FINAL, STATE_REQUEST, STATE_RESPONSE }
 
+private const val MAX_PAYLOAD_BYTES = 1024 * 1024
+private const val MAX_TEXT_FIELD_LENGTH = 4096
+
 data class ProtocolEnvelope(
     val version: Int,
     val messageId: String,
@@ -143,6 +146,9 @@ data class ProtocolEnvelope(
         require(messageId.isNotBlank() && sessionId.isNotBlank() && matchId.isNotBlank()) { "IDs must not be blank" }
         require(senderPeerId.isNotBlank()) { "senderPeerId must not be blank" }
         require(sequence >= 0) { "sequence must be non-negative" }
+        require(payload.size <= MAX_PAYLOAD_BYTES) { "payload exceeds maximum size" }
+        require(senderPublicKeyBase64 == null || senderPublicKeyBase64.length <= MAX_TEXT_FIELD_LENGTH) { "sender public key field exceeds maximum size" }
+        require(signatureBase64 == null || signatureBase64.length <= MAX_TEXT_FIELD_LENGTH) { "signature field exceeds maximum size" }
     }
 
     fun canonicalBytes(): ByteArray {
@@ -160,6 +166,7 @@ data class ProtocolEnvelope(
 
 object ProtocolEnvelopeCodec {
     private const val VERSION = "envelope-v1"
+    private const val MAX_WIRE_BYTES = 2 * 1024 * 1024
 
     fun encode(envelope: ProtocolEnvelope): ByteArray {
         val b64 = java.util.Base64.getEncoder()
@@ -175,10 +182,13 @@ object ProtocolEnvelopeCodec {
             b64.encodeToString(envelope.payload),
             b64.encodeToString(envelope.senderPublicKeyBase64?.toByteArray(StandardCharsets.UTF_8) ?: ByteArray(0)),
             b64.encodeToString(envelope.signatureBase64?.toByteArray(StandardCharsets.UTF_8) ?: ByteArray(0))
-        ).joinToString("|").toByteArray(StandardCharsets.UTF_8)
+        ).joinToString("|").toByteArray(StandardCharsets.UTF_8).also {
+            if (it.size > MAX_WIRE_BYTES) throw P2PMatchException.InvalidMessage("Encoded protocol envelope exceeds maximum size")
+        }
     }
 
     fun decode(bytes: ByteArray): ProtocolEnvelope {
+        if (bytes.size > MAX_WIRE_BYTES) throw P2PMatchException.InvalidMessage("Protocol envelope exceeds maximum size")
         val parts = bytes.toString(StandardCharsets.UTF_8).split("|")
         if (parts.size != 11 || parts[0] != VERSION) {
             throw P2PMatchException.InvalidMessage("Malformed protocol envelope")
