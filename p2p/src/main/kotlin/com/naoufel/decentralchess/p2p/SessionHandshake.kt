@@ -50,6 +50,14 @@ data class MatchAcceptMessage(
     val initialFen: String
 )
 
+data class HandshakeFinishedMessage(
+    val transcriptHash: String
+) {
+    init {
+        require(transcriptHash.length == 64) { "transcriptHash must be SHA-256 hex" }
+    }
+}
+
 object SessionHandshakeCodec {
     private const val HELLO = "hello-v1"
     private const val OFFER = "offer-v1"
@@ -115,6 +123,11 @@ class SessionHandshake(
     private var remoteNonceBase64: String? = null
     private var offerSent = false
     private var acceptSent = false
+    private var localHelloPayload: ByteArray? = null
+    private var remoteHelloPayload: ByteArray? = null
+    private var offerPayload: ByteArray? = null
+    private var acceptPayload: ByteArray? = null
+    private var finishedSent = false
     private val seenMessageIds = mutableSetOf<String>()
 
     init {
@@ -134,7 +147,7 @@ class SessionHandshake(
         phase = SessionPhase.HELLO_SENT
         return envelope(MessageType.HELLO, SessionHandshakeCodec.encode(
             HelloMessage(P2PProtocol.VERSION, sessionId, matchId, localPeerId, nonce, localSide)
-        ))
+        ).also { localHelloPayload = it }
     }
 
     fun onEnvelope(envelope: ProtocolEnvelope): List<ProtocolEnvelope> {
@@ -146,6 +159,7 @@ class SessionHandshake(
             MessageType.HELLO -> onHello(envelope)
             MessageType.MATCH_OFFER -> onOffer(envelope)
             MessageType.MATCH_ACCEPT -> onAccept(envelope)
+            MessageType.HANDSHAKE_FINISHED -> onFinished(envelope)
             else -> throw P2PMatchException.InvalidMessage("Unexpected handshake message: ${envelope.type}")
         }
     }
@@ -161,6 +175,7 @@ class SessionHandshake(
         if (hello.protocolVersion != P2PProtocol.VERSION) throw P2PMatchException.InvalidMessage("Unsupported handshake protocol")
         validateBinding(hello.sessionId, hello.matchId, hello.peerId)
         remoteNonceBase64 = hello.nonceBase64
+        remoteHelloPayload = envelope.payload.copy()
         phase = SessionPhase.HELLO_RECEIVED
 
         val localIsInitiator = localPeerId.value < remotePeerId.value
@@ -169,7 +184,7 @@ class SessionHandshake(
             phase = SessionPhase.NEGOTIATING
             listOf(envelope(MessageType.MATCH_OFFER, SessionHandshakeCodec.encode(
                 MatchOfferMessage(sessionId, matchId, localPeerId, remotePeerId, hello.nonceBase64, initialFen)
-            )))
+            ).also { offerPayload = it }))
         } else emptyList()
     }
 
@@ -189,10 +204,10 @@ class SessionHandshake(
         phase = SessionPhase.NEGOTIATING
         if (acceptSent) throw P2PMatchException.InvalidMessage("MATCH_ACCEPT already sent")
         acceptSent = true
-        phase = SessionPhase.READY
-        return listOf(envelope(MessageType.MATCH_ACCEPT, SessionHandshakeCodec.encode(
-            MatchAcceptMessage(sessionId, matchId, remotePeerId, localPeerId, offer.challengeNonceBase64, initialFen)
-        )))
+        val accept = SessionHandshakeCodec.encode(MatchAcceptMessage(sessionId, matchId, remotePeerId, localPeerId, offer.challengeNonceBase64, initialFen)).also { acceptPayload = it }
+        phase = SessionPhase.NEGOTIATING
+        acceptSent = true
+        return listOf(envelope(MessageType.MATCH_ACCEPT, accept))
     }
 
     private fun onAccept(envelope: ProtocolEnvelope): List<ProtocolEnvelope> {
@@ -206,8 +221,45 @@ class SessionHandshake(
         }
         if (accept.initialFen != initialFen) throw P2PMatchException.InvalidMessage("MATCH_ACCEPT initial position mismatch")
         if (!offerSent) throw P2PMatchException.InvalidMessage("MATCH_ACCEPT received before MATCH_OFFER")
+        val acceptPayloadBytes = envelope.payload.copy()
+        acceptPayload = acceptPayloadBytes
+        phase = SessionPhase.NEGOTIATING
+        if (finishedSent) throw P2PMatchException.InvalidMessage("HANDSHAKE_FINISHED already sent")
+        finishedSent = true
+        return listOf(envelope(MessageType.HANDSHAKE_FINISHED, encodeFinished()))
+    }
+
+    private fun onFinished(envelope: ProtocolEnvelope): List<ProtocolEnvelope> {
+        if (phase != SessionPhase.NEGOTIATING) throw P2PMatchException.InvalidMessage("HANDSHAKE_FINISHED received before negotiation")
+        val finished = decodeFinished(envelope.payload)
+        val expected = transcriptHash()
+        if (finished.transcriptHash != expected) throw P2PMatchException.InvalidMessage("Handshake transcript mismatch")
+        if (!finishedSent) {
+            finishedSent = true
+            phase = SessionPhase.READY
+            return listOf(envelope(MessageType.HANDSHAKE_FINISHED, encodeFinished()))
+        }
         phase = SessionPhase.READY
         return emptyList()
+    }
+
+    private fun encodeFinished(): ByteArray = listOf("finished-v1", transcriptHash()).joinToString("|").toByteArray(StandardCharsets.UTF_8)
+
+    private fun decodeFinished(payload: ByteArray): HandshakeFinishedMessage {
+        val parts = payload.toString(StandardCharsets.UTF_8).split("|")
+        if (parts.size != 2 || parts[0] != "finished-v1") throw P2PMatchException.InvalidMessage("Malformed HANDSHAKE_FINISHED payload")
+        return runCatching { HandshakeFinishedMessage(parts[1]) }.getOrElse { throw P2PMatchException.InvalidMessage("Invalid HANDSHAKE_FINISHED payload") }
+    }
+
+    private fun transcriptHash(): String {
+        val localHello = localHelloPayload ?: throw P2PMatchException.InvalidMessage("Local HELLO missing")
+        val remoteHello = remoteHelloPayload ?: throw P2PMatchException.InvalidMessage("Remote HELLO missing")
+        val offer = offerPayload ?: throw P2PMatchException.InvalidMessage("MATCH_OFFER missing")
+        val accept = acceptPayload ?: throw P2PMatchException.InvalidMessage("MATCH_ACCEPT missing")
+        val helloPair = if (localPeerId.value < remotePeerId.value) listOf(localHello, remoteHello) else listOf(remoteHello, localHello)
+        val parts = helloPair + listOf(offer, accept)
+        val framed = parts.fold(ByteArray(0)) { acc, bytes -> acc + java.nio.ByteBuffer.allocate(4).putInt(bytes.size).array() + bytes }
+        return MessageDigest.getInstance("SHA-256").digest(framed).joinToString("") { "%02x".format(it) }
     }
 
     private fun validateEnvelope(envelope: ProtocolEnvelope) {
