@@ -130,7 +130,6 @@ class SessionHandshake(
     fun startHello(): ProtocolEnvelope {
         check(phase == SessionPhase.DISCONNECTED) { "HELLO can only start from DISCONNECTED" }
         val nonce = Base64.getEncoder().encodeToString(nonceSource())
-        require(nonceSource != { ByteArray(0) }) // no-op; nonce is generated above
         localNonceBase64 = nonce
         phase = SessionPhase.HELLO_SENT
         return envelope(MessageType.HELLO, SessionHandshakeCodec.encode(
