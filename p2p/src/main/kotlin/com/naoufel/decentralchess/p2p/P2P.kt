@@ -38,10 +38,42 @@ data class ProtocolEnvelope(
         require(sequence >= 0) { "sequence must be non-negative" }
     }
 
-    fun canonicalHeader(): ByteArray =
-        listOf(version.toString(), messageId, sessionId, senderPeerId, type.name, sequence.toString(), payload.size.toString())
-            .joinToString("\n") { it.length.toString() + ":" + it }
+    fun canonicalBytes(): ByteArray {
+        val payloadHash = MessageDigest.getInstance("SHA-256").digest(payload)
+            .joinToString("") { "%02x".format(it) }
+        return listOf(
+            "p2p-envelope-v1", version.toString(), messageId, sessionId, senderPeerId,
+            type.name, sequence.toString(), senderPublicKeyBase64 ?: "-", payloadHash
+        ).joinToString("\n") { it.length.toString() + ":" + it }
             .toByteArray(StandardCharsets.UTF_8)
+    }
+
+    fun canonicalHeader(): ByteArray = canonicalBytes()
+}
+
+data class EnvelopeIdentity(
+    val peerId: PeerId,
+    val publicKeyBase64: String,
+    val signer: (ByteArray) -> ByteArray
+) {
+    fun sign(envelope: ProtocolEnvelope): String =
+        java.util.Base64.getEncoder().encodeToString(signer(envelope.canonicalBytes()))
+}
+
+object EnvelopeVerifier {
+    fun verify(envelope: ProtocolEnvelope): Boolean = runCatching {
+        val key = envelope.senderPublicKeyBase64 ?: return false
+        val signature = envelope.signatureBase64 ?: return false
+        val keyBytes = java.util.Base64.getDecoder().decode(key)
+        val expectedPeerId = MessageDigest.getInstance("SHA-256").digest(keyBytes)
+            .joinToString("") { "%02x".format(it) }
+        if (expectedPeerId != envelope.senderPeerId) return false
+        AndroidKeystoreIdentityProvider.verify(
+            envelope.canonicalBytes(),
+            java.util.Base64.getDecoder().decode(signature),
+            key
+        )
+    }.getOrDefault(false)
 }
 
 data class HashCheckpoint(
