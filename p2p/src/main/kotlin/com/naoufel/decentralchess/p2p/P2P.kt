@@ -19,6 +19,50 @@ interface PeerTransport {
     suspend fun close(peer: PeerId)
 }
 
+
+interface PeerTransportListener {
+    suspend fun onConnected(peer: PeerId)
+    suspend fun onPayload(peer: PeerId, payload: ByteArray)
+    suspend fun onDisconnected(peer: PeerId)
+}
+
+class InMemoryPeerTransport(
+    private val localPeer: PeerId
+) : PeerTransport {
+    private var listener: PeerTransportListener? = null
+    private var remote: InMemoryPeerTransport? = null
+
+    fun setListener(listener: PeerTransportListener) {
+        this.listener = listener
+    }
+
+    fun pairWith(remote: InMemoryPeerTransport) {
+        require(remote.localPeer != localPeer) { "A transport cannot pair with itself" }
+        this.remote = remote
+        remote.remote = this
+    }
+
+    override suspend fun connect(peer: PeerId) {
+        val target = remote ?: error("Transport is not paired")
+        require(target.localPeer == peer) { "Unknown peer: \${peer.value}" }
+        listener?.onConnected(peer)
+        target.listener?.onConnected(localPeer)
+    }
+
+    override suspend fun send(peer: PeerId, payload: ByteArray) {
+        val target = remote ?: error("Transport is not paired")
+        require(target.localPeer == peer) { "Unknown peer: \${peer.value}" }
+        target.listener?.onPayload(localPeer, payload.copyOf())
+    }
+
+    override suspend fun close(peer: PeerId) {
+        val target = remote ?: return
+        require(target.localPeer == peer) { "Unknown peer: \${peer.value}" }
+        listener?.onDisconnected(peer)
+        target.listener?.onDisconnected(localPeer)
+    }
+}
+
 enum class MessageType { HELLO, MATCH_OFFER, MATCH_ACCEPT, MOVE, ACK, HASH_CHECKPOINT, MATCH_FINAL, STATE_REQUEST, STATE_RESPONSE }
 
 data class ProtocolEnvelope(
