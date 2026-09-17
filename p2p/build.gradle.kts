@@ -10,5 +10,6 @@ android {
 }
 
 dependencies {
+    implementation(project(":identity"))
     testImplementation("junit:junit:4.13.2")
 }
