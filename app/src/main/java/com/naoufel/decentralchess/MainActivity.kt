@@ -24,25 +24,31 @@ class MainActivity : ComponentActivity() {
 fun DecentralChessApp() {
     var position by remember { mutableStateOf(Position.initial()) }
     var selected by remember { mutableStateOf<Square?>(null) }
+    val legalTargets = selected?.let { from -> position.legalMoves(from).map { it.to }.toSet() } ?: emptySet()
+    val status = position.gameStatus()
+
     MaterialTheme {
         Surface(modifier = Modifier.fillMaxSize()) {
             Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(16.dp)) {
                 Text("DECENTRAL CHESS", fontSize = 25.sp, fontWeight = FontWeight.Bold)
-                Text("Foundation v0.1 • local-first architecture", color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Spacer(Modifier.height(18.dp))
-                Text("${position.sideToMove} TO MOVE", fontWeight = FontWeight.Bold)
+                Text("Foundation v0.2 • deterministic legal chess core", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.height(14.dp))
+                Text(if (status == GameStatus.CHECK || status == GameStatus.ONGOING) "${position.sideToMove} TO MOVE" else status.name.replace('_', ' '), fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(8.dp))
-                ChessBoard(position, selected) { sq ->
+                ChessBoard(position, selected, legalTargets) { sq ->
                     val current = selected
-                    if (current == null && position.pieceAt(sq)?.side == position.sideToMove) selected = sq
-                    else if (current != null) {
-                        runCatching { position = position.apply(Move(current, sq)) }
+                    if (current == null) {
+                        if (position.pieceAt(sq)?.side == position.sideToMove) selected = sq
+                    } else {
+                        val candidate = position.legalMoves(current).firstOrNull { it.to == sq }
+                        if (candidate != null) position = position.apply(candidate)
                         selected = null
                     }
                 }
-                Spacer(Modifier.height(12.dp))
-                Text("State hash: ${position.stableHash()}", fontSize = 12.sp)
-                Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(10.dp))
+                Text("FEN: ${position.toFen()}", fontSize = 10.sp)
+                Text("SHA-256: ${position.stableHash()}", fontSize = 10.sp)
+                Spacer(Modifier.height(10.dp))
                 OutlinedButton(onClick = { position = Position.initial(); selected = null }) { Text("New Game") }
             }
         }
@@ -59,13 +65,20 @@ private fun glyph(piece: Piece): String = when(piece.type) {
 }
 
 @Composable
-private fun ChessBoard(position: Position, selected: Square?, onSquare: (Square) -> Unit) {
+private fun ChessBoard(position: Position, selected: Square?, legalTargets: Set<Square>, onSquare: (Square) -> Unit) {
     Column(Modifier.fillMaxWidth().aspectRatio(1f)) {
         for (rank in 7 downTo 0) Row(Modifier.weight(1f)) {
             for (file in 0..7) {
-                val sq = Square(file, rank); val dark = (file + rank) % 2 == 1
-                Box(Modifier.weight(1f).fillMaxHeight().background(if (dark) Color(0xFF769656) else Color(0xFFEEEED2)).clickable { onSquare(sq) }, contentAlignment = Alignment.Center) {
-                    if (selected == sq) Box(Modifier.fillMaxSize().background(Color(0x6688AAFF)))
+                val sq = Square(file, rank)
+                val dark = (file + rank) % 2 == 1
+                val selectedHere = selected == sq
+                val targetHere = sq in legalTargets
+                Box(
+                    Modifier.weight(1f).fillMaxHeight().background(if (dark) Color(0xFF769656) else Color(0xFFEEEED2)).clickable { onSquare(sq) },
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (selectedHere) Box(Modifier.fillMaxSize().background(Color(0x6688AAFF)))
+                    if (targetHere) Box(Modifier.size(10.dp).background(Color(0x99808080)))
                     position.pieceAt(sq)?.let { Text(glyph(it), fontSize = 34.sp) }
                 }
             }
