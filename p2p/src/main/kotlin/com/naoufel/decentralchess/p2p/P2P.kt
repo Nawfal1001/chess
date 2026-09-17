@@ -5,6 +5,7 @@ import com.naoufel.decentralchess.chess.Move
 import com.naoufel.decentralchess.chess.PieceType
 import com.naoufel.decentralchess.chess.Side
 import com.naoufel.decentralchess.chess.Square
+import com.naoufel.decentralchess.identity.AndroidKeystoreIdentityProvider
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import java.util.UUID
@@ -27,6 +28,7 @@ data class ProtocolEnvelope(
     val type: MessageType,
     val sequence: Long,
     val payload: ByteArray,
+    val senderPublicKeyBase64: String? = null,
     val signatureBase64: String? = null
 ) {
     init {
@@ -122,6 +124,9 @@ class MatchStateMachine(
     val localPeerId: PeerId,
     val remotePeerId: PeerId,
     val localSide: Side,
+    val matchId: String,
+    private val localIdentity: EnvelopeIdentity? = null,
+    private val remotePublicKeyBase64: String? = null,
     initialHistory: GameHistory = GameHistory()
 ) {
     private val history = initialHistory
@@ -144,15 +149,27 @@ class MatchStateMachine(
         val resultingHash = history.gameHash()
         val message = MoveMessage(move, previousHash, resultingHash, history.moveHistory.size)
         val sequence = nextOutgoingSequence++
-        return ProtocolEnvelope(
+        val unsigned = ProtocolEnvelope(
             P2PProtocol.VERSION, UUID.randomUUID().toString(), sessionId, localPeerId.value,
-            MessageType.MOVE, sequence, MoveMessageCodec.encode(message)
+            MessageType.MOVE, sequence, MoveMessageCodec.encode(message),
+            localIdentity?.publicKeyBase64
         )
+        if (localIdentity != null && localIdentity.peerId != localPeerId) {
+            throw P2PMatchException.InvalidSender(localPeerId.value, localIdentity.peerId.value)
+        }
+        return if (localIdentity == null) unsigned else
+            unsigned.copy(signatureBase64 = localIdentity.sign(unsigned))
     }
 
     fun receive(envelope: ProtocolEnvelope): MoveMessage {
         if (envelope.sessionId != sessionId) throw P2PMatchException.InvalidSession(sessionId, envelope.sessionId)
         if (envelope.senderPeerId != remotePeerId.value) throw P2PMatchException.InvalidSender(remotePeerId.value, envelope.senderPeerId)
+        if (remotePublicKeyBase64 != null && envelope.senderPublicKeyBase64 != remotePublicKeyBase64) {
+            throw P2PMatchException.InvalidMessage("Unexpected sender public key")
+        }
+        if (remotePublicKeyBase64 != null && !EnvelopeVerifier.verify(envelope)) {
+            throw P2PMatchException.InvalidMessage("Invalid MOVE signature")
+        }
         if (envelope.type != MessageType.MOVE) throw P2PMatchException.InvalidMessage("Expected MOVE, received \${envelope.type}")
         if (envelope.sequence != expectedIncomingSequence) {
             throw P2PMatchException.InvalidSequence(expectedIncomingSequence, envelope.sequence)
@@ -188,11 +205,12 @@ object P2PProtocol {
 
     fun nextSequence(previous: Long): Long = previous + 1
 
-    fun newSession(local: PeerId, remote: PeerId, matchId: String): MatchStateMachine {
+    fun newSession(local: PeerId, remote: PeerId, matchId: String, localSide: Side = Side.WHITE, localIdentity: EnvelopeIdentity? = null, remotePublicKeyBase64: String? = null): MatchStateMachine {
         require(local.value.isNotBlank() && remote.value.isNotBlank()) { "Peer IDs must not be blank" }
         require(local.value != remote.value) { "A peer cannot match against itself" }
         require(matchId.isNotBlank()) { "matchId must not be blank" }
-        return MatchStateMachine(UUID.randomUUID().toString(), local, remote, Side.WHITE)
+        require(localIdentity == null || localIdentity.peerId == local) { "localIdentity does not match local peer" }
+        return MatchStateMachine(UUID.randomUUID().toString(), local, remote, localSide, matchId, localIdentity, remotePublicKeyBase64)
     }
 
     fun payloadHash(payload: ByteArray): String =
