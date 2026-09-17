@@ -78,6 +78,38 @@ object EnvelopeVerifier {
     }.getOrDefault(false)
 }
 
+data class AckMessage(
+    val acknowledgedMessageId: String,
+    val acknowledgedSequence: Long,
+    val gameHash: String
+) {
+    init {
+        require(acknowledgedMessageId.isNotBlank()) { "acknowledgedMessageId must not be blank" }
+        require(acknowledgedSequence >= 0) { "acknowledgedSequence must be non-negative" }
+        require(gameHash.length == 64) { "gameHash must be SHA-256 hex" }
+    }
+}
+
+object AckMessageCodec {
+    private const val VERSION = "ack-v1"
+
+    fun encode(message: AckMessage): ByteArray =
+        listOf(VERSION, message.acknowledgedMessageId, message.acknowledgedSequence, message.gameHash)
+            .joinToString("|").toByteArray(StandardCharsets.UTF_8)
+
+    fun decode(payload: ByteArray): AckMessage {
+        val parts = payload.toString(StandardCharsets.UTF_8).split("|")
+        if (parts.size != 4 || parts[0] != VERSION) {
+            throw P2PMatchException.InvalidMessage("Malformed ACK payload")
+        }
+        val sequence = parts[2].toLongOrNull()
+            ?: throw P2PMatchException.InvalidMessage("Invalid ACK sequence")
+        return runCatching { AckMessage(parts[1], sequence, parts[3]) }.getOrElse {
+            throw P2PMatchException.InvalidMessage("Invalid ACK fields")
+        }
+    }
+}
+
 data class HashCheckpoint(
     val sessionId: String,
     val sequence: Long,
@@ -241,6 +273,7 @@ class MatchStateMachine(
     private var expectedIncomingSequence = 0L
     private var nextOutgoingSequence = 0L
     private var pendingStateRequestMessageId: String? = null
+    private val pendingOutgoingMessageIds = linkedMapOf<String, Long>()
 
     fun history(): GameHistory = history
 
@@ -269,8 +302,37 @@ class MatchStateMachine(
         val signed = if (localIdentity == null) unsigned else
             unsigned.copy(signatureBase64 = localIdentity.sign(unsigned))
         nextOutgoingSequence++
+        pendingOutgoingMessageIds[unsigned.messageId] = sequence
         return signed
     }
+
+    fun createAck(envelope: ProtocolEnvelope): ProtocolEnvelope {
+        if (envelope.sessionId != sessionId) throw P2PMatchException.InvalidSession(sessionId, envelope.sessionId)
+        if (envelope.matchId != matchId) throw P2PMatchException.InvalidMessage("Invalid match ID")
+        if (envelope.senderPeerId != remotePeerId.value) throw P2PMatchException.InvalidSender(remotePeerId.value, envelope.senderPeerId)
+        if (remotePublicKeyBase64 != null && !EnvelopeVerifier.verify(envelope)) {
+            throw P2PMatchException.InvalidMessage("Invalid ACK source signature")
+        }
+        val ack = AckMessage(envelope.messageId, envelope.sequence, history.gameHash())
+        return buildEnvelope(MessageType.ACK, AckMessageCodec.encode(ack))
+    }
+
+    fun receiveAck(envelope: ProtocolEnvelope): AckMessage {
+        validateControlEnvelope(envelope, MessageType.ACK)
+        val ack = AckMessageCodec.decode(envelope.payload)
+        val expectedSequence = pendingOutgoingMessageIds[ack.acknowledgedMessageId]
+            ?: throw P2PMatchException.InvalidMessage("ACK does not reference an outstanding message")
+        if (ack.acknowledgedSequence != expectedSequence) {
+            throw P2PMatchException.InvalidSequence(expectedSequence, ack.acknowledgedSequence)
+        }
+        if (ack.gameHash != history.gameHash()) {
+            throw P2PMatchException.ResultHashMismatch(history.gameHash(), ack.gameHash)
+        }
+        pendingOutgoingMessageIds.remove(ack.acknowledgedMessageId)
+        return ack
+    }
+
+    fun pendingAcknowledgementCount(): Int = pendingOutgoingMessageIds.size
 
     fun createStateRequest(): ProtocolEnvelope {
         val request = StateRequest(sessionId, matchId, expectedIncomingSequence, history.gameHash())
