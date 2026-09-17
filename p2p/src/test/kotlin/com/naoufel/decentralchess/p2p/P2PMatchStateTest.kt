@@ -119,6 +119,42 @@ class P2PMatchStateTest {
     }
 
     @Test
+    fun acknowledgementsTrackOutstandingMovesAndVerifyHash() {
+        val w = whiteMachine()
+        val b = blackMachine()
+
+        val moveEnvelope = w.createLocalMove(move(4, 1, 4, 3))
+        assertEquals(1, w.pendingAcknowledgementCount())
+
+        b.receive(moveEnvelope)
+        val ack = b.createAck(moveEnvelope)
+        val decoded = AckMessageCodec.decode(ack.payload)
+
+        assertEquals(moveEnvelope.messageId, decoded.acknowledgedMessageId)
+        assertEquals(moveEnvelope.sequence, decoded.acknowledgedSequence)
+        assertEquals(b.history().gameHash(), decoded.gameHash)
+
+        w.receiveAck(ack)
+        assertEquals(0, w.pendingAcknowledgementCount())
+    }
+
+    @Test
+    fun forgedAcknowledgementCannotClearOutstandingMove() {
+        val w = whiteMachine()
+        val b = blackMachine()
+        val moveEnvelope = w.createLocalMove(move(4, 1, 4, 3))
+        b.receive(moveEnvelope)
+
+        val ack = b.createAck(moveEnvelope)
+        val decoded = AckMessageCodec.decode(ack.payload)
+        val forged = ack.copy(payload = AckMessageCodec.encode(decoded.copy(acknowledgedMessageId = "attacker")))
+        assertThrows(P2PMatchException.InvalidMessage::class.java) {
+            w.receiveAck(forged)
+        }
+        assertEquals(1, w.pendingAcknowledgementCount())
+    }
+
+    @Test
     fun stateRecoveryReplaysDeterministicallyAndResetsIncomingSequence() {
         val w = whiteMachine()
         val b = blackMachine()
