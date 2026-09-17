@@ -49,9 +49,17 @@ class SessionHandshakeTest {
         assertEquals(MessageType.MATCH_OFFER, offer.type)
         val accepted = b.onEnvelope(offer).single()
         assertEquals(MessageType.MATCH_ACCEPT, accepted.type)
+        assertEquals(SessionPhase.NEGOTIATING, b.phase())
+
+        val finishedW = w.onEnvelope(accepted).single()
+        assertEquals(MessageType.HANDSHAKE_FINISHED, finishedW.type)
+        assertEquals(SessionPhase.NEGOTIATING, w.phase())
+
+        val finishedB = b.onEnvelope(finishedW).single()
+        assertEquals(MessageType.HANDSHAKE_FINISHED, finishedB.type)
         assertEquals(SessionPhase.READY, b.phase())
 
-        w.onEnvelope(accepted)
+        w.onEnvelope(finishedB)
         assertEquals(SessionPhase.READY, w.phase())
     }
 
