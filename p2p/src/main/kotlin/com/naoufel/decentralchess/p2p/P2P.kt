@@ -53,6 +53,57 @@ data class ProtocolEnvelope(
     fun canonicalHeader(): ByteArray = canonicalBytes()
 }
 
+object ProtocolEnvelopeCodec {
+    private const val VERSION = "envelope-v1"
+
+    fun encode(envelope: ProtocolEnvelope): ByteArray {
+        val b64 = java.util.Base64.getEncoder()
+        return listOf(
+            VERSION,
+            envelope.version,
+            envelope.messageId,
+            envelope.sessionId,
+            envelope.matchId,
+            envelope.senderPeerId,
+            envelope.type.name,
+            envelope.sequence,
+            b64.encodeToString(envelope.payload),
+            b64.encodeToString(envelope.senderPublicKeyBase64?.toByteArray(StandardCharsets.UTF_8) ?: ByteArray(0)),
+            b64.encodeToString(envelope.signatureBase64?.toByteArray(StandardCharsets.UTF_8) ?: ByteArray(0))
+        ).joinToString("|").toByteArray(StandardCharsets.UTF_8)
+    }
+
+    fun decode(bytes: ByteArray): ProtocolEnvelope {
+        val parts = bytes.toString(StandardCharsets.UTF_8).split("|")
+        if (parts.size != 11 || parts[0] != VERSION) {
+            throw P2PMatchException.InvalidMessage("Malformed protocol envelope")
+        }
+        val version = parts[1].toIntOrNull()
+            ?: throw P2PMatchException.InvalidMessage("Invalid envelope version")
+        val sequence = parts[7].toLongOrNull()
+            ?: throw P2PMatchException.InvalidMessage("Invalid envelope sequence")
+        val b64 = java.util.Base64.getDecoder()
+        fun decodeBytes(index: Int): ByteArray = runCatching { b64.decode(parts[index]) }.getOrElse {
+            throw P2PMatchException.InvalidMessage("Invalid envelope base64 field")
+        }
+        val publicKeyBytes = decodeBytes(9)
+        val signatureBytes = decodeBytes(10)
+        val publicKey = publicKeyBytes.takeIf { it.isNotEmpty() }?.toString(StandardCharsets.UTF_8)
+        val signature = signatureBytes.takeIf { it.isNotEmpty() }?.toString(StandardCharsets.UTF_8)
+        val type = runCatching { MessageType.valueOf(parts[6]) }.getOrElse {
+            throw P2PMatchException.InvalidMessage("Unknown envelope message type")
+        }
+        return runCatching {
+            ProtocolEnvelope(
+                version, parts[2], parts[3], parts[4], parts[5], type, sequence,
+                decodeBytes(8), publicKey, signature
+            )
+        }.getOrElse {
+            throw P2PMatchException.InvalidMessage("Invalid protocol envelope fields")
+        }
+    }
+}
+
 data class EnvelopeIdentity(
     val peerId: PeerId,
     val publicKeyBase64: String,
