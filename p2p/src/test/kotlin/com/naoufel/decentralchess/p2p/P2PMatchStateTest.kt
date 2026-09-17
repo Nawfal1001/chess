@@ -310,4 +310,28 @@ class P2PMatchStateTest {
         )
         assertEquals(message, MoveMessageCodec.decode(MoveMessageCodec.encode(message)))
     }
+
+    @Test
+    fun oversizedEnvelopeIsRejectedBeforeDecode() {
+        val oversized = ByteArray(2 * 1024 * 1024 + 1)
+        assertThrows(P2PMatchException.InvalidMessage::class.java) {
+            ProtocolEnvelopeCodec.decode(oversized)
+        }
+    }
+
+    @Test
+    fun oversizedPayloadCannotCreateEnvelope() {
+        assertThrows(IllegalArgumentException::class.java) {
+            ProtocolEnvelope(
+                P2PProtocol.VERSION,
+                "message",
+                "session",
+                "match",
+                "peer",
+                MessageType.MOVE,
+                0L,
+                ByteArray(1024 * 1024 + 1)
+            )
+        }
+    }
 }
