@@ -248,6 +248,8 @@ object StateResponseCodec {
     }
 }
 
+enum class MatchConnectionState { CONNECTED, DISCONNECTED, RECOVERING }
+
 data class MatchStateSnapshot(
     val sessionId: String,
     val localPeerId: PeerId,
@@ -273,9 +275,21 @@ class MatchStateMachine(
     private var expectedIncomingSequence = 0L
     private var nextOutgoingSequence = 0L
     private var pendingStateRequestMessageId: String? = null
+    private var connectionState = MatchConnectionState.CONNECTED
     private val pendingOutgoingMessageIds = linkedMapOf<String, Long>()
 
     fun history(): GameHistory = history
+
+    fun connectionState(): MatchConnectionState = connectionState
+
+    fun markDisconnected() {
+        connectionState = MatchConnectionState.DISCONNECTED
+    }
+
+    fun createReconnectRequest(): ProtocolEnvelope {
+        connectionState = MatchConnectionState.RECOVERING
+        return createStateRequest()
+    }
 
     fun snapshot(): MatchStateSnapshot = MatchStateSnapshot(
         sessionId, localPeerId, remotePeerId, localSide, expectedIncomingSequence,
@@ -430,6 +444,7 @@ class MatchStateMachine(
         }
         expectedIncomingSequence = response.moveCount.toLong()
         pendingStateRequestMessageId = null
+        connectionState = MatchConnectionState.CONNECTED
         return response
     }
 
