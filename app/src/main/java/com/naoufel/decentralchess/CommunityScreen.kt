@@ -11,13 +11,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.naoufel.decentralchess.p2p.*
+import com.naoufel.decentralchess.identity.PublicIdentity
 import com.naoufel.decentralchess.storage.CommunityRepository
 import java.util.UUID
 
 private enum class CommunityTab { CHANNELS, DMS, TOURNAMENTS, GAMES }
 
 @Composable
-fun CommunityScreen(repository: CommunityRepository, onBack: () -> Unit) {
+fun CommunityScreen(repository: CommunityRepository, identity: PublicIdentity, onBack: () -> Unit) {
     var tab by remember { mutableStateOf(CommunityTab.CHANNELS) }
     var selectedChannel by remember { mutableStateOf<CommunityChannel?>(null) }
     var selectedPeer by remember { mutableStateOf<PeerProfile?>(null) }
@@ -25,6 +26,7 @@ fun CommunityScreen(repository: CommunityRepository, onBack: () -> Unit) {
     var showModeration by remember { mutableStateOf(false) }
     var draft by remember { mutableStateOf("") }
     val history = repository
+    val localPeerId = identity.id
 
     val channels = remember(repository) {
         repository.channels().ifEmpty {
@@ -59,6 +61,7 @@ fun CommunityScreen(repository: CommunityRepository, onBack: () -> Unit) {
         CommunityChannelChat(
             channel = selectedChannel!!,
             history = history,
+            localPeerId = localPeerId,
             draft = draft,
             onDraftChange = { draft = it },
             onBack = { selectedChannel = null },
@@ -71,7 +74,7 @@ fun CommunityScreen(repository: CommunityRepository, onBack: () -> Unit) {
                 TopAppBar(
                     title = { Text("Community", fontWeight = FontWeight.Bold) },
                     navigationIcon = { TextButton(onClick = onBack) { Text("‹ Back") } },
-                    actions = { Text("P2P", modifier = Modifier.padding(end = 16.dp), color = MaterialTheme.colorScheme.primary) }
+                    actions = { Text("P2P • ${identity.id.take(8)}", modifier = Modifier.padding(end = 16.dp), color = MaterialTheme.colorScheme.primary) }
                 )
             }
         ) { padding ->
@@ -104,8 +107,8 @@ fun CommunityScreen(repository: CommunityRepository, onBack: () -> Unit) {
     selectedPeer?.let { peer ->
         PeerProfileDialog(peer, { selectedPeer = null }, { showChallenge = true }, { showModeration = true })
     }
-    if (showChallenge && selectedPeer != null) ChallengeDialog(selectedPeer!!, repository) { showChallenge = false }
-    if (showModeration && selectedPeer != null) ModerationDialog(selectedPeer!!, repository) { showModeration = false }
+    if (showChallenge && selectedPeer != null) ChallengeDialog(selectedPeer!!, repository, localPeerId) { showChallenge = false }
+    if (showModeration && selectedPeer != null) ModerationDialog(selectedPeer!!, repository, localPeerId) { showModeration = false }
 }
 
 @Composable
@@ -183,6 +186,7 @@ private fun ActiveGames(peers: List<PeerProfile>, onSpectate: (PeerProfile) -> U
 private fun CommunityChannelChat(
     channel: CommunityChannel,
     history: CommunityHistory,
+    localPeerId: String,
     draft: String,
     onDraftChange: (String) -> Unit,
     onBack: () -> Unit,
@@ -211,7 +215,7 @@ private fun CommunityChannelChat(
                 OutlinedTextField(draft, onDraftChange, Modifier.weight(1f), placeholder = { Text("Message…") }, singleLine = true)
                 Spacer(Modifier.width(8.dp))
                 Button(enabled = draft.isNotBlank(), onClick = {
-                    val msg = CommunityMessage("local-${System.nanoTime()}", channel.id, "me", draft.trim(), System.currentTimeMillis())
+                    val msg = CommunityMessage("local-${System.nanoTime()}", channel.id, localPeerId, draft.trim(), System.currentTimeMillis())
                     history.append(msg)
                     messages = messages + msg
                     onDraftChange("")
@@ -221,11 +225,11 @@ private fun CommunityChannelChat(
     ) { padding ->
         LazyColumn(Modifier.fillMaxSize().padding(padding).padding(horizontal = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(messages) { msg ->
-                Card(Modifier.fillMaxWidth().clickable { if (msg.senderPeerId != "me") onPeerClick(msg.senderPeerId) }) {
+                Card(Modifier.fillMaxWidth().clickable { if (msg.senderPeerId != localPeerId) onPeerClick(msg.senderPeerId) }) {
                     Column(Modifier.padding(12.dp)) {
                         Text(msg.senderPeerId, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
                         Text(msg.text)
-                        if (msg.senderPeerId != "me") TextButton(onClick = { onChallenge(msg.senderPeerId) }) { Text("Challenge") }
+                        if (msg.senderPeerId != localPeerId) TextButton(onClick = { onChallenge(msg.senderPeerId) }) { Text("Challenge") }
                     }
                 }
             }
@@ -252,7 +256,7 @@ private fun PeerProfileDialog(peer: PeerProfile, onDismiss: () -> Unit, onChalle
 }
 
 @Composable
-private fun ChallengeDialog(peer: PeerProfile, repository: CommunityRepository, onDismiss: () -> Unit) {
+private fun ChallengeDialog(peer: PeerProfile, repository: CommunityRepository, localPeerId: String, onDismiss: () -> Unit) {
     var control by remember { mutableStateOf("10+0") }
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -269,7 +273,7 @@ private fun ChallengeDialog(peer: PeerProfile, repository: CommunityRepository, 
             }
         },
         confirmButton = { Button(onClick = {
-            repository.saveChallenge(CommunityChallenge(UUID.randomUUID().toString(), "me", peer.peerId, control, "startpos", System.currentTimeMillis()))
+            repository.saveChallenge(CommunityChallenge(UUID.randomUUID().toString(), localPeerId, peer.peerId, control, "startpos", System.currentTimeMillis()))
             onDismiss()
         }) { Text("Send ${control}") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
@@ -277,7 +281,7 @@ private fun ChallengeDialog(peer: PeerProfile, repository: CommunityRepository, 
 }
 
 @Composable
-private fun ModerationDialog(peer: PeerProfile, repository: CommunityRepository, onDismiss: () -> Unit) {
+private fun ModerationDialog(peer: PeerProfile, repository: CommunityRepository, localPeerId: String, onDismiss: () -> Unit) {
     val currentModeration = remember(peer.peerId) { repository.moderation() }
     var blocked by remember(peer.peerId) { mutableStateOf(peer.peerId in currentModeration.blockedPeers) }
     var muted by remember(peer.peerId) { mutableStateOf(peer.peerId in currentModeration.mutedPeers) }
@@ -294,7 +298,7 @@ private fun ModerationDialog(peer: PeerProfile, repository: CommunityRepository,
                     Checkbox(muted, { muted = it })
                     Text("Mute peer")
                 }
-                TextButton(onClick = { repository.saveReport(CommunityReport(UUID.randomUUID().toString(), "me", peer.peerId, null, "user_report", System.currentTimeMillis())); onDismiss() }) { Text("Report user") }
+                TextButton(onClick = { repository.saveReport(CommunityReport(UUID.randomUUID().toString(), localPeerId, peer.peerId, null, "user_report", System.currentTimeMillis())); onDismiss() }) { Text("Report user") }
             }
         },
         confirmButton = { Button(onClick = { repository.setBlocked(peer.peerId, blocked); repository.setMuted(peer.peerId, muted); onDismiss() }) { Text("Save") } }
