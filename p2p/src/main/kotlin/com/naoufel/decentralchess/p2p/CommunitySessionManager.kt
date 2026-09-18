@@ -79,6 +79,56 @@ class CommunitySessionManager(
         }
     }
 
+    suspend fun sendChannelMessage(peer: PeerId, channelId: String, text: String): CommunityDelivery =
+        sendToPeer(peer, MessageType.CHAT, CommunityPacket(channelId, localPeerId.value, text))
+
+    suspend fun sendDirectMessage(peer: PeerId, text: String): CommunityDelivery {
+        val conversationId = listOf(localPeerId.value, peer.value).sorted().joinToString(":")
+        return sendToPeer(peer, MessageType.DM, CommunityPacket(conversationId, localPeerId.value, text))
+    }
+
+    suspend fun sendProfile(peer: PeerId, displayName: String, rating: Int): CommunityDelivery =
+        sendToPeer(peer, MessageType.PROFILE, CommunityPacket(
+            conversationId = "profile:${localPeerId.value}",
+            senderPeerId = localPeerId.value,
+            displayName = displayName,
+            rating = rating
+        ))
+
+    suspend fun sendChallenge(
+        peer: PeerId,
+        challengeId: String,
+        timeControl: String,
+        initialFen: String
+    ): CommunityDelivery = sendToPeer(
+        peer,
+        MessageType.CHALLENGE,
+        CommunityPacket(
+            conversationId = "challenge:$challengeId",
+            senderPeerId = localPeerId.value,
+            referenceId = peer.value,
+            timeControl = timeControl,
+            initialFen = initialFen
+        )
+    )
+
+    suspend fun acceptChallenge(
+        peer: PeerId,
+        challengeId: String,
+        timeControl: String,
+        initialFen: String
+    ): CommunityDelivery = sendToPeer(
+        peer,
+        MessageType.CHALLENGE_ACCEPT,
+        CommunityPacket(
+            conversationId = "challenge:$challengeId",
+            senderPeerId = localPeerId.value,
+            referenceId = challengeId,
+            timeControl = timeControl,
+            initialFen = initialFen
+        )
+    )
+
     suspend fun broadcast(
         channelId: String,
         type: MessageType,
