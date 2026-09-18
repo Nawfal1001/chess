@@ -26,6 +26,14 @@ class CommunityRuntime(
 
     fun pendingCount(): Int = sessionManager.pendingDeliveries().size
 
+    fun registerAuthenticatedSession(peerId: String, controller: AuthenticatedP2PSessionController) {
+        sessionManager.register(PeerId(peerId), controller)
+    }
+
+    fun unregisterAuthenticatedSession(peerId: String) {
+        sessionManager.unregister(PeerId(peerId))
+    }
+
     suspend fun sendDirectMessage(peerId: String, text: String): CommunityDelivery =
         sessionManager.sendDirectMessage(PeerId(peerId), text)
 
