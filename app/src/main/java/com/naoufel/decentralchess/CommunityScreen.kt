@@ -65,6 +65,7 @@ fun CommunityScreen(repository: CommunityRepository, identity: PublicIdentity, r
         CommunityChannelChat(
             channel = selectedChannel!!,
             history = history,
+            runtime = runtime,
             localPeerId = localPeerId,
             draft = draft,
             onDraftChange = { draft = it },
@@ -153,6 +154,7 @@ private fun DirectMessageScreen(
     peer: PeerProfile,
     history: CommunityHistory,
     localPeerId: String,
+    runtime: CommunityRuntime,
     onBack: () -> Unit,
     onPeerProfile: () -> Unit
 ) {
@@ -251,6 +253,7 @@ private fun ActiveGames(peers: List<PeerProfile>, onSpectate: (PeerProfile) -> U
 private fun CommunityChannelChat(
     channel: CommunityChannel,
     history: CommunityHistory,
+    runtime: CommunityRuntime,
     localPeerId: String,
     draft: String,
     onDraftChange: (String) -> Unit,
@@ -258,6 +261,7 @@ private fun CommunityChannelChat(
     onPeerClick: (String) -> Unit,
     onChallenge: (String) -> Unit
 ) {
+    val scope = rememberCoroutineScope()
     var messages by remember(channel.id) {
         mutableStateOf(
             history.messages(channel.id).ifEmpty {
