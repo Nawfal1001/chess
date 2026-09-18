@@ -45,7 +45,7 @@ class CommunityRuntime(
             CommunityPacket(channelId, identity.id, text)
         }
 
-    suspend fun sendChallenge(
+    suspend fun joinChannel(peerId: String, channelId: String): CommunityDelivery =\n        sessionManager.joinChannel(PeerId(peerId), channelId)\n\n    suspend fun leaveChannel(peerId: String, channelId: String): CommunityDelivery =\n        sessionManager.leaveChannel(PeerId(peerId), channelId)\n\n    suspend fun sendChallenge(
         peerId: String,
         challengeId: String,
         timeControl: String,
