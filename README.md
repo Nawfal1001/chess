@@ -2,6 +2,12 @@
 
 Initial foundation for a local-first, decentralized chess ecosystem.
 
+## v0.5 community foundation
+- Global/local channel, DM, game and tournament domain models
+- Peer profiles, challenges and moderation state
+- Persistent chat-history interface for the Android storage layer
+- Existing authenticated P2P envelope remains the transport/security boundary
+
 ## v0.3 implemented
 - Deterministic legal move generation
 - Check and king-safety validation
