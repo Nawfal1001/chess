@@ -27,6 +27,11 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 fun DecentralChessApp(repository: GameRecordRepository) {
+    var showCommunity by remember { mutableStateOf(false) }
+    if (showCommunity) {
+        CommunityScreen(onBack = { showCommunity = false })
+        return
+    }
     val restored = remember {
         repository.list(1).firstOrNull()?.let { stored ->
             runCatching {
@@ -84,6 +89,8 @@ fun DecentralChessApp(repository: GameRecordRepository) {
                 Text("SHA-256: ${position.stableHash()}", fontSize = 10.sp)
                 Text("Game hash: ${history.gameHash()}", fontSize = 10.sp)
                 Spacer(Modifier.height(10.dp))
+                Button(onClick = { showCommunity = true }) { Text("Community") }
+                Spacer(Modifier.height(8.dp))
                 OutlinedButton(onClick = {
                     gameId = null
                     history.undoAll()
