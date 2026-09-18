@@ -13,6 +13,7 @@ kotlinOptions { jvmTarget = "17" }
 
 dependencies {
     implementation(project(":chess-core"))
+    implementation(project(":p2p"))
     implementation("androidx.core:core-ktx:1.15.0")
     testImplementation("junit:junit:4.13.2")
 }
