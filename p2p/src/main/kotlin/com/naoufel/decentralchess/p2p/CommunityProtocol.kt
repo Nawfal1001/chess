@@ -84,19 +84,21 @@ class CommunityP2PClient(
     private val localPeerId: PeerId,
     private val send: suspend (ProtocolEnvelope) -> Unit,
     private val identity: EnvelopeIdentity? = null,
-    private val nextSequence: () -> Long = { 0L }
+    private val nextSequence: () -> Long = { 0L },
+    private val sessionId: String? = null,
+    private val matchId: String? = null
 ) {
     suspend fun send(
         type: MessageType,
         packet: CommunityPacket,
-        sessionId: String,
-        matchId: String
+        sessionId: String? = this.sessionId,
+        matchId: String? = this.matchId
     ) {
         require(type in COMMUNITY_TYPES)
-        require(sessionId.isNotBlank() && matchId.isNotBlank())
+        require(!sessionId.isNullOrBlank() && !matchId.isNullOrBlank())
         require(packet.senderPeerId == localPeerId.value)
         val unsigned = ProtocolEnvelope(
-            P2PProtocol.VERSION, UUID.randomUUID().toString(), sessionId, matchId,
+            P2PProtocol.VERSION, UUID.randomUUID().toString(), sessionId!!, matchId!!,
             localPeerId.value, type, nextSequence(), CommunityPacketCodec.encode(packet),
             identity?.publicKeyBase64
         )
