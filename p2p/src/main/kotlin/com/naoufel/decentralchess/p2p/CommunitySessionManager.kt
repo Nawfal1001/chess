@@ -89,6 +89,18 @@ class CommunitySessionManager(
         return sendToPeer(peer, MessageType.DM, CommunityPacket(conversationId, localPeerId.value, text))
     }
 
+    suspend fun joinChannel(peer: PeerId, channelId: String): CommunityDelivery = sendToPeer(
+        peer,
+        MessageType.CHANNEL_JOIN,
+        CommunityPacket(channelId, localPeerId.value)
+    )
+
+    suspend fun leaveChannel(peer: PeerId, channelId: String): CommunityDelivery = sendToPeer(
+        peer,
+        MessageType.CHANNEL_LEAVE,
+        CommunityPacket(channelId, localPeerId.value)
+    )
+
     suspend fun sendProfile(peer: PeerId, displayName: String, rating: Int): CommunityDelivery =
         sendToPeer(peer, MessageType.PROFILE, CommunityPacket(
             conversationId = "profile:${localPeerId.value}",
