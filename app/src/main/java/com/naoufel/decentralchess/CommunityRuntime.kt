@@ -32,6 +32,11 @@ class CommunityRuntime(
     suspend fun sendChannelMessage(peerId: String, channelId: String, text: String): CommunityDelivery =
         sessionManager.sendChannelMessage(PeerId(peerId), channelId, text)
 
+    suspend fun broadcastChannelMessage(channelId: String, text: String): List<CommunityDelivery> =
+        sessionManager.broadcast(channelId, MessageType.CHAT) { peer ->
+            CommunityPacket(channelId, identity.id, text)
+        }
+
     suspend fun sendChallenge(
         peerId: String,
         challengeId: String,
