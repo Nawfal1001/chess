@@ -354,8 +354,10 @@ class AuthenticatedP2PSessionController(
 
     override suspend fun onConnected(peer: PeerId) {
         if (peer != state.remotePeerId) throw P2PMatchException.InvalidSender(state.remotePeerId.value, peer.value)
-        val hello = handshake.startHello()
-        transport.send(peer, ProtocolEnvelopeCodec.encode(hello))
+        if (handshake.phase() == SessionPhase.DISCONNECTED) {
+            val hello = handshake.startHello()
+            transport.send(peer, ProtocolEnvelopeCodec.encode(hello))
+        }
     }
 
     override suspend fun onPayload(peer: PeerId, payload: ByteArray) {
