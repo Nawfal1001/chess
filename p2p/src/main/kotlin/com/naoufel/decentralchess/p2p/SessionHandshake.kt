@@ -300,12 +300,14 @@ class AuthenticatedP2PSessionController(
     private val state: MatchStateMachine,
     private val transport: PeerTransport,
     private val identity: HandshakeIdentity,
-    verifySignature: (ProtocolEnvelope) -> Boolean
+    verifySignature: (ProtocolEnvelope) -> Boolean,
+    private val communityHandler: CommunityEnvelopeHandler? = null
 ) : PeerTransportListener {
     private val handshake = SessionHandshake(
         state.localPeerId, state.remotePeerId, state.sessionId, state.matchId,
         state.localSide, state.history().initialPosition().toFen(), identity, verifySignature
     )
+    private var nextCommunitySequence = 0L
 
     init {
         require(identity.peerId == state.localPeerId) { "Handshake identity does not match state" }
@@ -324,6 +326,28 @@ class AuthenticatedP2PSessionController(
     suspend fun sendMove(move: com.naoufel.decentralchess.chess.Move): ProtocolEnvelope {
         handshake.requireReady()
         val envelope = state.createLocalMove(move)
+        transport.send(state.remotePeerId, ProtocolEnvelopeCodec.encode(envelope))
+        return envelope
+    }
+
+    suspend fun sendCommunity(type: MessageType, packet: CommunityPacket): ProtocolEnvelope {
+        handshake.requireReady()
+        require(CommunityP2PReceiver.isCommunityType(type))
+        require(packet.senderPeerId == identity.peerId.value)
+        val unsigned = ProtocolEnvelope(
+            P2PProtocol.VERSION,
+            UUID.randomUUID().toString(),
+            state.sessionId,
+            state.matchId,
+            identity.peerId.value,
+            type,
+            nextCommunitySequence++,
+            CommunityPacketCodec.encode(packet),
+            identity.publicKeyBase64
+        )
+        val envelope = unsigned.copy(
+            signatureBase64 = Base64.getEncoder().encodeToString(identity.sign(unsigned.canonicalBytes()))
+        )
         transport.send(state.remotePeerId, ProtocolEnvelopeCodec.encode(envelope))
         return envelope
     }
@@ -359,12 +383,26 @@ class AuthenticatedP2PSessionController(
                 transport.send(state.remotePeerId, ProtocolEnvelopeCodec.encode(response))
             }
             MessageType.STATE_RESPONSE -> state.receiveStateResponse(envelope)
+            MessageType.CHANNEL_JOIN, MessageType.CHANNEL_LEAVE, MessageType.CHAT,
+            MessageType.DM, MessageType.CHALLENGE, MessageType.CHALLENGE_ACCEPT,
+            MessageType.PROFILE, MessageType.TOURNAMENT -> {
+                val handler = communityHandler
+                    ?: throw P2PMatchException.InvalidMessage("No community handler attached")
+                val packet = CommunityP2PReceiver.decode(
+                    envelope,
+                    state.remotePeerId.value
+                )
+                handler.onCommunityEnvelope(state.remotePeerId, envelope, packet)
+            }
             else -> throw P2PMatchException.InvalidMessage("Unsupported READY message: ${envelope.type}")
         }
     }
 
     override suspend fun onDisconnected(peer: PeerId) {
-        if (peer == state.remotePeerId) state.markDisconnected()
+        if (peer == state.remotePeerId) {
+            state.markDisconnected()
+            communityHandler?.onCommunityDisconnected(peer)
+        }
     }
 }
 
