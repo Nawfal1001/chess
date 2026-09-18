@@ -6,6 +6,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -18,7 +19,7 @@ import java.util.UUID
 private enum class CommunityTab { CHANNELS, DMS, TOURNAMENTS, GAMES }
 
 @Composable
-fun CommunityScreen(repository: CommunityRepository, identity: PublicIdentity, onBack: () -> Unit) {
+fun CommunityScreen(repository: CommunityRepository, identity: PublicIdentity, runtime: CommunityRuntime, onBack: () -> Unit) {
     var tab by remember { mutableStateOf(CommunityTab.CHANNELS) }
     var selectedChannel by remember { mutableStateOf<CommunityChannel?>(null) }
     var selectedPeer by remember { mutableStateOf<PeerProfile?>(null) }
@@ -28,6 +29,9 @@ fun CommunityScreen(repository: CommunityRepository, identity: PublicIdentity, o
     var draft by remember { mutableStateOf("") }
     val history = repository
     val localPeerId = identity.id
+    val scope = rememberCoroutineScope()
+    val connectedPeers = runtime.connectedPeerIds()
+    val pendingCount = runtime.pendingCount()
 
     val channels = remember(repository) {
         repository.channels().ifEmpty {
@@ -75,7 +79,7 @@ fun CommunityScreen(repository: CommunityRepository, identity: PublicIdentity, o
                 TopAppBar(
                     title = { Text("Community", fontWeight = FontWeight.Bold) },
                     navigationIcon = { TextButton(onClick = onBack) { Text("‹ Back") } },
-                    actions = { Text("P2P • ${identity.id.take(8)}", modifier = Modifier.padding(end = 16.dp), color = MaterialTheme.colorScheme.primary) }
+                    actions = { Column(horizontalAlignment = Alignment.End, modifier = Modifier.padding(end = 16.dp)) { Text(if (connectedPeers.isEmpty()) "Identity ready" else "${connectedPeers.size} peer(s) online", style = MaterialTheme.typography.labelSmall); Text(if (pendingCount == 0) "Secure P2P" else "${pendingCount} pending", style = MaterialTheme.typography.labelSmall) } }
                 )
             }
         ) { padding ->
@@ -110,6 +114,7 @@ fun CommunityScreen(repository: CommunityRepository, identity: PublicIdentity, o
             peer = peer,
             history = history,
             localPeerId = localPeerId,
+            runtime = runtime,
             onBack = { selectedDmPeer = null },
             onPeerProfile = { selectedDmPeer = null; selectedPeer = peer }
         )
@@ -119,7 +124,7 @@ fun CommunityScreen(repository: CommunityRepository, identity: PublicIdentity, o
     selectedPeer?.let { peer ->
         PeerProfileDialog(peer, { selectedPeer = null }, { showChallenge = true }, { showModeration = true })
     }
-    if (showChallenge && selectedPeer != null) ChallengeDialog(selectedPeer!!, repository, localPeerId) { showChallenge = false }
+    if (showChallenge && selectedPeer != null) ChallengeDialog(selectedPeer!!, repository, runtime, localPeerId) { showChallenge = false }
     if (showModeration && selectedPeer != null) ModerationDialog(selectedPeer!!, repository, localPeerId) { showModeration = false }
 }
 
@@ -169,10 +174,12 @@ private fun DirectMessageScreen(
                 OutlinedTextField(value = draft, onValueChange = { draft = it }, modifier = Modifier.weight(1f), placeholder = { Text("Message…") }, singleLine = true)
                 Spacer(Modifier.width(8.dp))
                 Button(enabled = draft.isNotBlank(), onClick = {
-                    val msg = CommunityMessage("dm-${UUID.randomUUID()}", conversationId, localPeerId, draft.trim(), System.currentTimeMillis())
+                    val text = draft.trim()
+                    val msg = CommunityMessage("dm-${UUID.randomUUID()}", conversationId, localPeerId, text, System.currentTimeMillis())
                     history.append(msg)
                     messages = history.messages(conversationId)
                     draft = ""
+                    scope.launch { runCatching { runtime.sendDirectMessage(peer.peerId, text) } }
                 }) { Text("Send") }
             }
         }
@@ -277,6 +284,7 @@ private fun CommunityChannelChat(
                     history.append(msg)
                     messages = messages + msg
                     onDraftChange("")
+                    scope.launch { runCatching { runtime.broadcastChannelMessage(channel.id, msg.text) } }
                 }) { Text("Send") }
             }
         }
@@ -314,7 +322,8 @@ private fun PeerProfileDialog(peer: PeerProfile, onDismiss: () -> Unit, onChalle
 }
 
 @Composable
-private fun ChallengeDialog(peer: PeerProfile, repository: CommunityRepository, localPeerId: String, onDismiss: () -> Unit) {
+private fun ChallengeDialog(peer: PeerProfile, repository: CommunityRepository, runtime: CommunityRuntime, localPeerId: String, onDismiss: () -> Unit) {
+    val scope = rememberCoroutineScope()
     var control by remember { mutableStateOf("10+0") }
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -331,7 +340,9 @@ private fun ChallengeDialog(peer: PeerProfile, repository: CommunityRepository, 
             }
         },
         confirmButton = { Button(onClick = {
-            repository.saveChallenge(CommunityChallenge(UUID.randomUUID().toString(), localPeerId, peer.peerId, control, "startpos", System.currentTimeMillis()))
+            val challengeId = UUID.randomUUID().toString()
+            repository.saveChallenge(CommunityChallenge(challengeId, localPeerId, peer.peerId, control, "startpos", System.currentTimeMillis()))
+            scope.launch { runCatching { runtime.sendChallenge(peer.peerId, challengeId, control, "startpos") } }
             onDismiss()
         }) { Text("Send ${control}") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
