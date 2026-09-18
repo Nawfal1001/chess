@@ -39,19 +39,19 @@ class CommunityRepositoryHandler(
         if (repository.moderation().blockedPeers.contains(peer.value)) return
 
         when (envelope.type) {
-            MessageType.CHAT, MessageType.DM -> {
-                repository.append(
-                    CommunityMessage(
-                        id = envelope.messageId,
-                        conversationId = packet.conversationId,
-                        senderPeerId = peer.value,
-                        text = packet.text,
-                        createdAtMs = System.currentTimeMillis()
-                    )
+            MessageType.CHAT, MessageType.DM -> repository.append(
+                CommunityMessage(
+                    id = envelope.messageId,
+                    conversationId = packet.conversationId,
+                    senderPeerId = peer.value,
+                    text = packet.text,
+                    createdAtMs = System.currentTimeMillis()
                 )
-            }
+            )
+
             MessageType.PROFILE -> {
-                val displayName = packet.displayName?.takeIf { it.isNotBlank() } ?: peer.value.take(16)
+                val displayName = packet.displayName?.takeIf { it.isNotBlank() }
+                    ?: peer.value.take(16)
                 repository.upsertPeer(
                     PeerProfile(
                         peerId = peer.value,
@@ -61,13 +61,28 @@ class CommunityRepositoryHandler(
                     )
                 )
             }
+
+            MessageType.CHALLENGE -> {
+                val target = packet.referenceId ?: return
+                if (target != repository.peer(peer.value)?.peerId && target != peer.value) return
+                repository.saveChallenge(
+                    CommunityChallenge(
+                        id = envelope.messageId,
+                        fromPeerId = peer.value,
+                        toPeerId = target,
+                        timeControl = packet.timeControl ?: "10+0",
+                        initialFen = packet.initialFen ?: "startpos",
+                        createdAtMs = System.currentTimeMillis()
+                    )
+                )
+            }
+
             else -> Unit
         }
     }
 
     override suspend fun onCommunityDisconnected(peer: PeerId) = Unit
 }
-
 class SqliteCommunityRepository(context: Context) : CommunityRepository {
     private val helper = ChessDatabase(context.applicationContext)
 
