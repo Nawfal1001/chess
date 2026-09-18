@@ -70,3 +70,12 @@ The repository contains CI configuration, but the GitHub connector currently rep
 - Added protocol message types for channel join/leave, DMs, challenges, profiles and tournaments
 - Challenge and moderation UI actions now persist locally
 - Direct/local community transport remains possible offline; global discovery/relay is still a future networking layer
+
+### v0.7 — authenticated community session bridge
+
+- Restored the complete P2P transport/state foundation on main.
+- Community envelopes can now be signed with the same identity used by authenticated P2P sessions.
+- AuthenticatedP2PSessionController can send and receive community traffic after the chess session handshake.
+- Incoming CHAT, DM, and PROFILE packets can be persisted through CommunityRepositoryHandler.
+- Sender identity is bound to the envelope and community packet; remote signatures can be verified against the expected public key.
+- Community transport is still peer-session based: global discovery/relay and always-online channels remain a separate infrastructure layer.
