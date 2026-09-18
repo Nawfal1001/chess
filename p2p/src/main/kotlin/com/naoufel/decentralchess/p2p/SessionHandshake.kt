@@ -390,7 +390,8 @@ class AuthenticatedP2PSessionController(
                     ?: throw P2PMatchException.InvalidMessage("No community handler attached")
                 val packet = CommunityP2PReceiver.decode(
                     envelope,
-                    state.remotePeerId.value
+                    state.remotePeerId.value,
+                    requireSignature = true
                 )
                 handler.onCommunityEnvelope(state.remotePeerId, envelope, packet)
             }
