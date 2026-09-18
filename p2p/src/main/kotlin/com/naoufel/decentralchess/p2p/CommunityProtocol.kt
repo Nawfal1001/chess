@@ -75,11 +75,15 @@ private val COMMUNITY_TYPES = setOf(
     MessageType.PROFILE, MessageType.TOURNAMENT
 )
 
+interface CommunityMembershipListener {
+    suspend fun onChannelJoin(peer: PeerId, channelId: String) {}
+    suspend fun onChannelLeave(peer: PeerId, channelId: String) {}
+}
+
 interface CommunityEnvelopeHandler {
     suspend fun onCommunityEnvelope(peer: PeerId, envelope: ProtocolEnvelope, packet: CommunityPacket)
     suspend fun onCommunityDisconnected(peer: PeerId) {}
 }
-
 class CommunityP2PClient(
     private val localPeerId: PeerId,
     private val send: suspend (ProtocolEnvelope) -> Unit,
