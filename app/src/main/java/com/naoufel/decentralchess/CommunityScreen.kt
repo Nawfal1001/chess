@@ -278,8 +278,9 @@ private fun ChallengeDialog(peer: PeerProfile, repository: CommunityRepository, 
 
 @Composable
 private fun ModerationDialog(peer: PeerProfile, repository: CommunityRepository, onDismiss: () -> Unit) {
-    var blocked by remember { mutableStateOf(false) }
-    var muted by remember { mutableStateOf(false) }
+    val currentModeration = remember(peer.peerId) { repository.moderation() }
+    var blocked by remember(peer.peerId) { mutableStateOf(peer.peerId in currentModeration.blockedPeers) }
+    var muted by remember(peer.peerId) { mutableStateOf(peer.peerId in currentModeration.mutedPeers) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("Moderate ${peer.displayName}") },
@@ -293,7 +294,7 @@ private fun ModerationDialog(peer: PeerProfile, repository: CommunityRepository,
                     Checkbox(muted, { muted = it })
                     Text("Mute peer")
                 }
-                TextButton(onClick = onDismiss) { Text("Report user") }
+                TextButton(onClick = { repository.saveReport(CommunityReport(UUID.randomUUID().toString(), "me", peer.peerId, null, "user_report", System.currentTimeMillis())); onDismiss() }) { Text("Report user") }
             }
         },
         confirmButton = { Button(onClick = { repository.setBlocked(peer.peerId, blocked); repository.setMuted(peer.peerId, muted); onDismiss() }) { Text("Save") } }
