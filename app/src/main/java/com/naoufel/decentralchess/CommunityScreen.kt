@@ -29,7 +29,6 @@ fun CommunityScreen(repository: CommunityRepository, identity: PublicIdentity, r
     var draft by remember { mutableStateOf("") }
     val history = repository
     val localPeerId = identity.id
-    val scope = rememberCoroutineScope()
     val connectedPeers = runtime.connectedPeerIds()
     val pendingCount = runtime.pendingCount()
 
@@ -158,6 +157,7 @@ private fun DirectMessageScreen(
     onPeerProfile: () -> Unit
 ) {
     val conversationId = listOf(localPeerId, peer.peerId).sorted().joinToString(":")
+    val scope = rememberCoroutineScope()
     var draft by remember(peer.peerId) { mutableStateOf("") }
     var messages by remember(peer.peerId) { mutableStateOf(history.messages(conversationId)) }
 
