@@ -66,35 +66,64 @@ object CommunityPacketCodec {
     }
 }
 
+private val COMMUNITY_TYPES = setOf(
+    MessageType.CHANNEL_JOIN, MessageType.CHANNEL_LEAVE, MessageType.CHAT,
+    MessageType.DM, MessageType.CHALLENGE, MessageType.CHALLENGE_ACCEPT,
+    MessageType.PROFILE, MessageType.TOURNAMENT
+)
+
+interface CommunityEnvelopeHandler {
+    suspend fun onCommunityEnvelope(peer: PeerId, envelope: ProtocolEnvelope, packet: CommunityPacket)
+    suspend fun onCommunityDisconnected(peer: PeerId) {}
+}
+
 class CommunityP2PClient(
     private val localPeerId: PeerId,
     private val send: suspend (ProtocolEnvelope) -> Unit,
+    private val identity: EnvelopeIdentity? = null,
     private val nextSequence: () -> Long = { 0L }
 ) {
-    suspend fun send(type: MessageType, packet: CommunityPacket, sessionId: String = "", matchId: String = "") {
-        require(type in setOf(
-            MessageType.CHANNEL_JOIN, MessageType.CHANNEL_LEAVE, MessageType.CHAT,
-            MessageType.DM, MessageType.CHALLENGE, MessageType.CHALLENGE_ACCEPT,
-            MessageType.PROFILE, MessageType.TOURNAMENT
-        ))
-        val envelope = ProtocolEnvelope(
+    suspend fun send(
+        type: MessageType,
+        packet: CommunityPacket,
+        sessionId: String,
+        matchId: String
+    ) {
+        require(type in COMMUNITY_TYPES)
+        require(sessionId.isNotBlank() && matchId.isNotBlank())
+        require(packet.senderPeerId == localPeerId.value)
+        val unsigned = ProtocolEnvelope(
             P2PProtocol.VERSION, UUID.randomUUID().toString(), sessionId, matchId,
-            localPeerId.value, type, nextSequence(), CommunityPacketCodec.encode(packet)
+            localPeerId.value, type, nextSequence(), CommunityPacketCodec.encode(packet),
+            identity?.publicKeyBase64
         )
-        send(envelope)
+        send(if (identity == null) unsigned else unsigned.copy(
+            signatureBase64 = identity.sign(unsigned)
+        ))
     }
 }
 
 object CommunityP2PReceiver {
-    fun decode(envelope: ProtocolEnvelope, expectedSenderPeerId: String? = null): CommunityPacket {
-        require(envelope.type in setOf(
-            MessageType.CHANNEL_JOIN, MessageType.CHANNEL_LEAVE, MessageType.CHAT,
-            MessageType.DM, MessageType.CHALLENGE, MessageType.CHALLENGE_ACCEPT,
-            MessageType.PROFILE, MessageType.TOURNAMENT
-        ))
+    fun isCommunityType(type: MessageType): Boolean = type in COMMUNITY_TYPES
+
+    fun decode(
+        envelope: ProtocolEnvelope,
+        expectedSenderPeerId: String? = null,
+        expectedPublicKeyBase64: String? = null
+    ): CommunityPacket {
+        require(envelope.type in COMMUNITY_TYPES)
         if (expectedSenderPeerId != null && envelope.senderPeerId != expectedSenderPeerId) {
             throw P2PMatchException.InvalidSender(expectedSenderPeerId, envelope.senderPeerId)
         }
-        return CommunityPacketCodec.decode(envelope.payload)
+        if (expectedPublicKeyBase64 != null) {
+            if (envelope.senderPublicKeyBase64 != expectedPublicKeyBase64 || !EnvelopeVerifier.verify(envelope)) {
+                throw P2PMatchException.InvalidMessage("Invalid community envelope signature")
+            }
+        }
+        val packet = CommunityPacketCodec.decode(envelope.payload)
+        if (packet.senderPeerId != envelope.senderPeerId) {
+            throw P2PMatchException.InvalidSender(envelope.senderPeerId, packet.senderPeerId)
+        }
+        return packet
     }
 }
