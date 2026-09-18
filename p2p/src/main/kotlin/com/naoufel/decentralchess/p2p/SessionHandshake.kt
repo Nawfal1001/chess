@@ -321,6 +321,10 @@ class AuthenticatedP2PSessionController(
 
     fun phase(): SessionPhase = handshake.phase()
 
+    fun snapshot(): MatchStateSnapshot = state.snapshot()
+
+    fun history(): com.naoufel.decentralchess.chess.GameHistory = state.history()
+
     suspend fun connect() {
         transport.connect(state.remotePeerId)
     }
