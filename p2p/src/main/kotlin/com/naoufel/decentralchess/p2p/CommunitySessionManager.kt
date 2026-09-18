@@ -63,10 +63,12 @@ class CommunitySessionManager(
         require(packet.senderPeerId == localPeerId.value) {
             "Community packet sender must be the local peer"
         }
-        val controller = sessions[peer]
-            ?: throw P2PMatchException.InvalidSender(peer.value, "not-connected")
         val delivery = CommunityDelivery(UUID.randomUUID().toString(), peer, type, packet)
         pending[delivery.id] = delivery
+        val controller = sessions[peer]
+        if (controller == null || controller.phase() != SessionPhase.READY) {
+            throw P2PMatchException.InvalidSender(peer.value, "not-connected")
+        }
         try {
             delivery.attempts++
             controller.sendCommunity(type, packet)
