@@ -19,6 +19,9 @@ data class CommunityPacket(
         require(conversationId.isNotBlank() && conversationId.length <= 128)
         require(senderPeerId.isNotBlank() && senderPeerId.length <= 128)
         require(text.length <= 4096)
+        require(referenceId == null || referenceId.isNotBlank())
+        require(timeControl == null || timeControl.isNotBlank())
+        require(initialFen == null || initialFen.isNotBlank())
         require(referenceId == null || referenceId.length <= 128)
         require(timeControl == null || timeControl.length <= 32)
         require(initialFen == null || initialFen.length <= 256)
@@ -117,6 +120,9 @@ object CommunityP2PReceiver {
             throw P2PMatchException.InvalidSender(expectedSenderPeerId, envelope.senderPeerId)
         }
         if (requireSignature || expectedPublicKeyBase64 != null) {
+            if (envelope.senderPublicKeyBase64 == null || envelope.signatureBase64 == null) {
+                throw P2PMatchException.InvalidMessage("Signed community envelope required")
+            }
             if (expectedPublicKeyBase64 != null && envelope.senderPublicKeyBase64 != expectedPublicKeyBase64) {
                 throw P2PMatchException.InvalidMessage("Unexpected community sender public key")
             }
