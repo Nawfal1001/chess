@@ -67,16 +67,12 @@ class AuthenticatedChallengeMatchSessionFactoryTest {
         assertTrue(created === coordinator.controller(challenge.matchId))
         assertEquals(SessionPhase.READY, created.phase())
         assertEquals(SessionPhase.READY, blackController.phase())
-        assertEquals(challenge.initialFen, createdStateFen(created))
+        assertEquals(challenge.initialFen, created.history().initialPosition().toFen())
         assertEquals(1, coordinator.activeMatchIds().size)
 
         created.sendMove(Move(Square(4, 1), Square(4, 3)))
-        assertEquals(1, whiteManager.pendingDeliveries().size.coerceAtMost(1))
-    }
-
-    private fun createdStateFen(controller: AuthenticatedP2PSessionController): String {
-        // The controller exposes the authenticated session phase; the exact initial
-        // state is asserted indirectly by sending the legal e2-e4 move above.
-        return "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+        assertEquals(1, created.snapshot().moveCount)
+        assertEquals(created.snapshot().gameHash(), blackController.snapshot().gameHash)
+        assertTrue(whiteManager.pendingDeliveries().isEmpty())
     }
 }
