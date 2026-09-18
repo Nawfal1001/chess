@@ -10,21 +10,21 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import com.naoufel.decentralchess.p2p.*
+import com.naoufel.decentralchess.p2p.*\nimport java.util.UUID
 
 private enum class CommunityTab { CHANNELS, DMS, TOURNAMENTS, GAMES }
 
 @Composable
-fun CommunityScreen(onBack: () -> Unit) {
+fun CommunityScreen(repository: CommunityRepository, onBack: () -> Unit) {
     var tab by remember { mutableStateOf(CommunityTab.CHANNELS) }
     var selectedChannel by remember { mutableStateOf<CommunityChannel?>(null) }
     var selectedPeer by remember { mutableStateOf<PeerProfile?>(null) }
     var showChallenge by remember { mutableStateOf(false) }
     var showModeration by remember { mutableStateOf(false) }
     var draft by remember { mutableStateOf("") }
-    val history = remember { InMemoryCommunityHistory() }
+    val history = repository
 
-    val channels = remember {
+    val channels = remember(repository) {
         listOf(
             CommunityChannel("global-chess", "Global Chess", CommunityScope.GLOBAL, "Open discussion, puzzles and games", 1248),
             CommunityChannel("rapid", "Rapid Arena", CommunityScope.GLOBAL, "10+0, 10+5 and blitz practice", 386),
@@ -32,14 +32,14 @@ fun CommunityScreen(onBack: () -> Unit) {
             CommunityChannel("beginners", "Beginners", CommunityScope.GLOBAL, "Learn together from the basics", 219)
         )
     }
-    val peers = remember {
+    val peers = remember(repository) {
         listOf(
             PeerProfile("peer-alice", "AliceKnight", "demo", 1842, 312),
             PeerProfile("peer-bob", "BobbyRook", "demo", 1610, 188),
             PeerProfile("peer-coach", "CoachBot", "demo", 2200, 999, bot = true)
         )
     }
-    val tournaments = remember {
+    val tournaments = remember(repository) {
         listOf(
             TournamentRoom("t1", "Friday Rapid Cup", "peer-alice", 32, true),
             TournamentRoom("t2", "Open Casual Arena", "peer-bob", 64, false),
@@ -55,7 +55,7 @@ fun CommunityScreen(onBack: () -> Unit) {
             onDraftChange = { draft = it },
             onBack = { selectedChannel = null },
             onPeerClick = { id -> selectedPeer = peers.firstOrNull { p -> p.peerId == id } },
-            onChallenge = { id -> selectedPeer = peers.firstOrNull { p -> p.peerId == id }; showChallenge = true }
+            onChallenge = { id -> selectedPeer = peers.firstOrNull { p -> p.peerId == id }; showChallenge = selectedPeer != null }
         )
     } else {
         Scaffold(
@@ -83,7 +83,7 @@ fun CommunityScreen(onBack: () -> Unit) {
                 when (tab) {
                     CommunityTab.CHANNELS -> ChannelList(channels) { selectedChannel = it }
                     CommunityTab.DMS -> DirectMessageList(peers) { selectedPeer = it }
-                    CommunityTab.TOURNAMENTS -> TournamentList(tournaments) { showChallenge = true }
+                    CommunityTab.TOURNAMENTS -> TournamentList(tournaments) { room ->\n                        selectedPeer = peers.firstOrNull { it.peerId == room.ownerPeerId }\n                        showChallenge = selectedPeer != null\n                    }
                     CommunityTab.GAMES -> ActiveGames(peers) { selectedPeer = it; showChallenge = true }
                 }
             }
@@ -93,8 +93,8 @@ fun CommunityScreen(onBack: () -> Unit) {
     selectedPeer?.let { peer ->
         PeerProfileDialog(peer, { selectedPeer = null }, { showChallenge = true }, { showModeration = true })
     }
-    if (showChallenge && selectedPeer != null) ChallengeDialog(selectedPeer!!, { showChallenge = false })
-    if (showModeration && selectedPeer != null) ModerationDialog(selectedPeer!!, { showModeration = false })
+    if (showChallenge && selectedPeer != null) ChallengeDialog(selectedPeer!!, repository) { showChallenge = false }
+    if (showModeration && selectedPeer != null) ModerationDialog(selectedPeer!!, repository) { showModeration = false }
 }
 
 @Composable
@@ -241,7 +241,7 @@ private fun PeerProfileDialog(peer: PeerProfile, onDismiss: () -> Unit, onChalle
 }
 
 @Composable
-private fun ChallengeDialog(peer: PeerProfile, onDismiss: () -> Unit) {
+private fun ChallengeDialog(peer: PeerProfile, repository: CommunityRepository, onDismiss: () -> Unit) {
     var control by remember { mutableStateOf("10+0") }
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -257,13 +257,13 @@ private fun ChallengeDialog(peer: PeerProfile, onDismiss: () -> Unit) {
                 }
             }
         },
-        confirmButton = { Button(onClick = onDismiss) { Text("Send ${control}") } },
+        confirmButton = { Button(onClick = {\n            repository.saveChallenge(CommunityChallenge(UUID.randomUUID().toString(), "me", peer.peerId, control, "startpos", System.currentTimeMillis()))\n            onDismiss()\n        }) { Text("Send ${control}") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
 }
 
 @Composable
-private fun ModerationDialog(peer: PeerProfile, onDismiss: () -> Unit) {
+private fun ModerationDialog(peer: PeerProfile, repository: CommunityRepository, onDismiss: () -> Unit) {
     var blocked by remember { mutableStateOf(false) }
     var muted by remember { mutableStateOf(false) }
     AlertDialog(
@@ -282,7 +282,7 @@ private fun ModerationDialog(peer: PeerProfile, onDismiss: () -> Unit) {
                 TextButton(onClick = onDismiss) { Text("Report user") }
             }
         },
-        confirmButton = { Button(onClick = onDismiss) { Text("Save") } }
+        confirmButton = { Button(onClick = { repository.setBlocked(peer.peerId, blocked); repository.setMuted(peer.peerId, muted); onDismiss() }) { Text("Save") } }
     )
 }
 
