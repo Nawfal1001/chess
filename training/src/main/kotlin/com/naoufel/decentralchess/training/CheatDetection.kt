@@ -63,11 +63,16 @@ class CheatDetectionAnalyzer(private val minimumSample: Int = 12) {
             )
         }
 
-        val engineMoves = moves.count { it.engineBestMove != null }
+        val engineMoves = moves.count { it.engineBestMove != null || it.engineRank != null }
         val exactMatches = moves.count {
             it.engineBestMove != null && it.move.equals(it.engineBestMove, ignoreCase = true)
         }
-        val engineCorrelation = if (engineMoves == 0) 0.0 else exactMatches.toDouble() / engineMoves
+        val topThreeMatches = moves.count { it.engineRank != null && it.engineRank <= 3 }
+        val engineCorrelation = if (engineMoves == 0) 0.0 else {
+            val exactRatio = exactMatches.toDouble() / engineMoves
+            val topThreeRatio = topThreeMatches.toDouble() / engineMoves
+            0.70 * exactRatio + 0.30 * topThreeRatio
+        }
 
         val losses = moves.mapNotNull { it.centipawnLoss }
         val lowLossRatio = if (losses.isEmpty()) 0.0 else
@@ -78,20 +83,36 @@ class CheatDetectionAnalyzer(private val minimumSample: Int = 12) {
         val nearInstantRatio = if (meanTime <= 1.0) 0.0 else
             timed.count { it <= max(500.0, meanTime * 0.15) }.toDouble() / timed.size
 
+        val baselineComparisons = moves.mapNotNull { move ->
+            move.baselineThinkTimeMs?.takeIf { it > 0 }?.let { baseline ->
+                (move.thinkTimeMs.toDouble() / baseline).coerceAtMost(10.0)
+            }
+        }
+        val baselineAnomaly = if (baselineComparisons.isEmpty()) 0.0 else
+            baselineComparisons.count { it < 0.20 }.toDouble() / baselineComparisons.size
+
         val perfectStreak = longestPerfectStreak(moves)
         val concentratedPerfectStreak = perfectStreak / moves.size.toDouble()
+        val difficultMoves = moves.filter { it.positionDifficulty >= 0.70 }
+        val difficultEngineMatches = difficultMoves.count {
+            it.engineBestMove != null && it.move.equals(it.engineBestMove, ignoreCase = true)
+        }
+        val difficultCorrelation = if (difficultMoves.isEmpty()) 0.0
+            else difficultEngineMatches.toDouble() / difficultMoves.size
 
         val score = min(1.0,
-            0.45 * engineCorrelation +
-                0.30 * lowLossRatio +
-                0.15 * nearInstantRatio +
+            0.35 * engineCorrelation +
+                0.25 * lowLossRatio +
+                0.12 * nearInstantRatio +
+                0.08 * baselineAnomaly +
+                0.10 * difficultCorrelation +
                 0.10 * concentratedPerfectStreak
         )
 
         val signals = buildList {
             if (engineMoves > 0) add(CheatSignal(
                 CheatSignal.Type.ENGINE_CORRELATION, engineCorrelation,
-                "$exactMatches/$engineMoves moves exactly matched the supplied engine principal move."
+                "$exactMatches/$engineMoves moves matched the supplied engine principal move; top-3 evidence is included when available."
             ))
             if (losses.isNotEmpty()) add(CheatSignal(
                 CheatSignal.Type.LOW_CENTIPAWN_LOSS, lowLossRatio,
@@ -101,9 +122,13 @@ class CheatDetectionAnalyzer(private val minimumSample: Int = 12) {
                 CheatSignal.Type.TIMING_ANOMALY, nearInstantRatio,
                 "${(nearInstantRatio * 100).toInt()}% of moves were near-instant relative to the player mean."
             ))
+            if (baselineComparisons.isNotEmpty()) add(CheatSignal(
+                CheatSignal.Type.TIMING_ANOMALY, baselineAnomaly,
+                "${(baselineAnomaly * 100).toInt()}% of moves were under 20% of the player's baseline think time."
+            ))
             add(CheatSignal(
-                CheatSignal.Type.PATTERN_CONCENTRATION, concentratedPerfectStreak,
-                "Longest exact-engine streak: $perfectStreak moves."
+                CheatSignal.Type.PATTERN_CONCENTRATION, difficultCorrelation,
+                "High-difficulty engine agreement: ${(difficultCorrelation * 100).toInt()}%. Longest exact-engine streak: $perfectStreak moves."
             ))
         }
 
