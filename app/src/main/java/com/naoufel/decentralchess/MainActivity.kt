@@ -15,6 +15,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.naoufel.decentralchess.chess.*
+import com.naoufel.decentralchess.identity.AndroidKeystoreIdentityProvider
 import com.naoufel.decentralchess.storage.GameRecordRepository
 import com.naoufel.decentralchess.storage.CommunityRepository
 import com.naoufel.decentralchess.storage.SqliteCommunityRepository
@@ -30,8 +31,9 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun DecentralChessApp(repository: GameRecordRepository, communityRepository: CommunityRepository) {
     var showCommunity by remember { mutableStateOf(false) }
+    val identity = remember { AndroidKeystoreIdentityProvider().identity() }
     if (showCommunity) {
-        CommunityScreen(repository = communityRepository, onBack = { showCommunity = false })
+        CommunityScreen(repository = communityRepository, identity = identity, onBack = { showCommunity = false })
         return
     }
     val restored = remember {
