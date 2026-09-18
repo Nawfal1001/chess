@@ -32,8 +32,14 @@ class MainActivity : ComponentActivity() {
 fun DecentralChessApp(repository: GameRecordRepository, communityRepository: CommunityRepository) {
     var showCommunity by remember { mutableStateOf(false) }
     val identity = remember { AndroidKeystoreIdentityProvider().identity() }
+    val communityRuntime = remember(identity.id) { CommunityRuntime(communityRepository, identity) }
     if (showCommunity) {
-        CommunityScreen(repository = communityRepository, identity = identity, onBack = { showCommunity = false })
+        CommunityScreen(
+            repository = communityRepository,
+            identity = identity,
+            runtime = communityRuntime,
+            onBack = { showCommunity = false }
+        )
         return
     }
     val restored = remember {
