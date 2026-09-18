@@ -10,7 +10,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import com.naoufel.decentralchess.p2p.*\nimport java.util.UUID
+import com.naoufel.decentralchess.p2p.*
+import com.naoufel.decentralchess.storage.CommunityRepository
+import java.util.UUID
 
 private enum class CommunityTab { CHANNELS, DMS, TOURNAMENTS, GAMES }
 
@@ -25,26 +27,32 @@ fun CommunityScreen(repository: CommunityRepository, onBack: () -> Unit) {
     val history = repository
 
     val channels = remember(repository) {
-        listOf(
-            CommunityChannel("global-chess", "Global Chess", CommunityScope.GLOBAL, "Open discussion, puzzles and games", 1248),
-            CommunityChannel("rapid", "Rapid Arena", CommunityScope.GLOBAL, "10+0, 10+5 and blitz practice", 386),
-            CommunityChannel("local-be", "Belgium • Local", CommunityScope.LOCAL, "Nearby players and meetups", 74),
-            CommunityChannel("beginners", "Beginners", CommunityScope.GLOBAL, "Learn together from the basics", 219)
-        )
+        repository.channels().ifEmpty {
+            listOf(
+                CommunityChannel("global-chess", "Global Chess", CommunityScope.GLOBAL, "Open discussion, puzzles and games", 1248),
+                CommunityChannel("rapid", "Rapid Arena", CommunityScope.GLOBAL, "10+0, 10+5 and blitz practice", 386),
+                CommunityChannel("local-be", "Belgium • Local", CommunityScope.LOCAL, "Nearby players and meetups", 74),
+                CommunityChannel("beginners", "Beginners", CommunityScope.GLOBAL, "Learn together from the basics", 219)
+            ).also { it.forEach(repository::upsertChannel) }
+        }
     }
     val peers = remember(repository) {
-        listOf(
-            PeerProfile("peer-alice", "AliceKnight", "demo", 1842, 312),
-            PeerProfile("peer-bob", "BobbyRook", "demo", 1610, 188),
-            PeerProfile("peer-coach", "CoachBot", "demo", 2200, 999, bot = true)
-        )
+        repository.peers().ifEmpty {
+            listOf(
+                PeerProfile("peer-alice", "AliceKnight", "demo", 1842, 312),
+                PeerProfile("peer-bob", "BobbyRook", "demo", 1610, 188),
+                PeerProfile("peer-coach", "CoachBot", "demo", 2200, 999, bot = true)
+            ).also { it.forEach(repository::upsertPeer) }
+        }
     }
     val tournaments = remember(repository) {
-        listOf(
-            TournamentRoom("t1", "Friday Rapid Cup", "peer-alice", 32, true),
-            TournamentRoom("t2", "Open Casual Arena", "peer-bob", 64, false),
-            TournamentRoom("t3", "Beginner Ladder", "peer-coach", 16, false)
-        )
+        repository.tournaments().ifEmpty {
+            listOf(
+                TournamentRoom("t1", "Friday Rapid Cup", "peer-alice", 32, true),
+                TournamentRoom("t2", "Open Casual Arena", "peer-bob", 64, false),
+                TournamentRoom("t3", "Beginner Ladder", "peer-coach", 16, false)
+            ).also { it.forEach(repository::saveTournament) }
+        }
     }
 
     if (selectedChannel != null) {
@@ -83,7 +91,10 @@ fun CommunityScreen(repository: CommunityRepository, onBack: () -> Unit) {
                 when (tab) {
                     CommunityTab.CHANNELS -> ChannelList(channels) { selectedChannel = it }
                     CommunityTab.DMS -> DirectMessageList(peers) { selectedPeer = it }
-                    CommunityTab.TOURNAMENTS -> TournamentList(tournaments) { room ->\n                        selectedPeer = peers.firstOrNull { it.peerId == room.ownerPeerId }\n                        showChallenge = selectedPeer != null\n                    }
+                    CommunityTab.TOURNAMENTS -> TournamentList(tournaments) { room ->
+                        selectedPeer = peers.firstOrNull { it.peerId == room.ownerPeerId }
+                        showChallenge = selectedPeer != null
+                    }
                     CommunityTab.GAMES -> ActiveGames(peers) { selectedPeer = it; showChallenge = true }
                 }
             }
@@ -257,7 +268,10 @@ private fun ChallengeDialog(peer: PeerProfile, repository: CommunityRepository, 
                 }
             }
         },
-        confirmButton = { Button(onClick = {\n            repository.saveChallenge(CommunityChallenge(UUID.randomUUID().toString(), "me", peer.peerId, control, "startpos", System.currentTimeMillis()))\n            onDismiss()\n        }) { Text("Send ${control}") } },
+        confirmButton = { Button(onClick = {
+            repository.saveChallenge(CommunityChallenge(UUID.randomUUID().toString(), "me", peer.peerId, control, "startpos", System.currentTimeMillis()))
+            onDismiss()
+        }) { Text("Send ${control}") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
 }
