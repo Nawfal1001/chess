@@ -29,8 +29,12 @@ interface CommunityRepository : CommunityHistory {
  * Moderation is enforced before remote messages are stored.
  */
 class CommunityRepositoryHandler(
-    private val repository: CommunityRepository
+    private val repository: CommunityRepository,
+    private val localPeerId: String
 ) : CommunityEnvelopeHandler {
+    init {
+        require(localPeerId.isNotBlank()) { "localPeerId must not be blank" }
+    }
     override suspend fun onCommunityEnvelope(
         peer: PeerId,
         envelope: ProtocolEnvelope,
@@ -64,7 +68,7 @@ class CommunityRepositoryHandler(
 
             MessageType.CHALLENGE -> {
                 val target = packet.referenceId ?: return
-                if (target != repository.peer(peer.value)?.peerId && target != peer.value) return
+                if (target != localPeerId) return
                 repository.saveChallenge(
                     CommunityChallenge(
                         id = envelope.messageId,
