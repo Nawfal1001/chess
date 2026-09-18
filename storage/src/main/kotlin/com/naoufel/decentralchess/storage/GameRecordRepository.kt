@@ -36,7 +36,7 @@ interface GameRecordRepository {
 }
 
 class SqliteGameRecordRepository(context: Context) : GameRecordRepository {
-    private val helper = GameDatabase(context.applicationContext)
+    private val helper = ChessDatabase(context.applicationContext)
 
     override fun save(
         history: GameHistory,
@@ -135,26 +135,3 @@ class SqliteGameRecordRepository(context: Context) : GameRecordRepository {
     }
 }
 
-private class GameDatabase(context: Context) : SQLiteOpenHelper(context, "decentral_chess.db", null, 1) {
-    override fun onCreate(db: SQLiteDatabase) {
-        db.execSQL(
-            """CREATE TABLE games (
-                id TEXT PRIMARY KEY NOT NULL,
-                created_at INTEGER NOT NULL,
-                updated_at INTEGER NOT NULL,
-                initial_fen TEXT NOT NULL,
-                final_fen TEXT NOT NULL,
-                game_hash TEXT NOT NULL,
-                pgn TEXT NOT NULL,
-                status TEXT NOT NULL,
-                white_player_id TEXT,
-                black_player_id TEXT
-            )""".trimIndent()
-        )
-        db.execSQL("CREATE INDEX idx_games_updated ON games(updated_at DESC)")
-    }
-
-    override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
-        // Schema migrations will be added here before the version is incremented.
-    }
-}
