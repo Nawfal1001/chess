@@ -111,7 +111,7 @@ fun CommunityScreen(repository: CommunityRepository, identity: PublicIdentity, o
             history = history,
             localPeerId = localPeerId,
             onBack = { selectedDmPeer = null },
-            onPeerProfile = { selectedPeer = peer }
+            onPeerProfile = { selectedDmPeer = null; selectedPeer = peer }
         )
         return@CommunityScreen
     }
