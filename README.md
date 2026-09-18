@@ -59,3 +59,14 @@ The game can now move from deterministic chess state → SAN/PGN → replay → 
 
 ## Verification note
 The repository contains CI configuration, but the GitHub connector currently reports no workflow run/status for the latest commits. Therefore no green CI result or APK build is being claimed yet.
+
+
+## v0.6 — persistent community + protocol
+
+- SQLite-backed community repository sharing the app's versioned database with game records
+- Persistent channels, peers, messages, challenges, tournaments, moderation state and reports
+- Community messages are retained across app restarts
+- Community P2P packet codec carried by the existing authenticated ProtocolEnvelope
+- Added protocol message types for channel join/leave, DMs, challenges, profiles and tournaments
+- Challenge and moderation UI actions now persist locally
+- Direct/local community transport remains possible offline; global discovery/relay is still a future networking layer
