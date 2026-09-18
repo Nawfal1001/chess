@@ -30,7 +30,11 @@ data class AcceptedChallenge(
     }
 }
 
-interface CommunityChallengeAcceptanceListener {\n    suspend fun onChallengeAccepted(challenge: AcceptedChallenge)\n}\n\ninterface ChallengeMatchSessionFactory {
+interface CommunityChallengeAcceptanceListener {
+    suspend fun onChallengeAccepted(challenge: AcceptedChallenge)
+}
+
+interface ChallengeMatchSessionFactory {
     suspend fun create(
         challenge: AcceptedChallenge,
         localPeerId: PeerId,
