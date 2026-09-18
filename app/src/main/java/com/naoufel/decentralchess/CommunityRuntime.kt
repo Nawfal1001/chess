@@ -53,6 +53,14 @@ class CommunityRuntime(
     ): CommunityDelivery =
         sessionManager.sendChallenge(PeerId(peerId), challengeId, timeControl, initialFen)
 
+    suspend fun acceptChallenge(
+        peerId: String,
+        challengeId: String,
+        timeControl: String,
+        initialFen: String
+    ): CommunityDelivery =
+        sessionManager.acceptChallenge(PeerId(peerId), challengeId, timeControl, initialFen)
+
     suspend fun retryPending(): List<CommunityDelivery> =
         sessionManager.retryPending()
 }
