@@ -15,6 +15,8 @@ interface CommunityRepository : CommunityHistory {
     fun peer(peerId: String): PeerProfile?
     fun peers(): List<PeerProfile>
     fun saveChallenge(challenge: CommunityChallenge)
+    fun updateChallengeStatus(id: String, status: ChallengeStatus, changedAtMs: Long = System.currentTimeMillis())
+    fun challenge(id: String): CommunityChallenge?
     fun challenges(limit: Int = 50): List<CommunityChallenge>
     fun saveTournament(room: TournamentRoom)
     fun tournaments(): List<TournamentRoom>
@@ -75,10 +77,20 @@ class CommunityRepositoryHandler(
                         fromPeerId = peer.value,
                         toPeerId = target,
                         timeControl = packet.timeControl ?: "10+0",
-                        initialFen = packet.initialFen ?: "startpos",
+                        initialFen = packet.initialFen ?: STANDARD_INITIAL_FEN,
                         createdAtMs = System.currentTimeMillis()
                     )
                 )
+            }
+
+            MessageType.CHALLENGE_ACCEPT -> {
+                val challengeId = packet.referenceId ?: return
+                val challenge = repository.challenge(challengeId) ?: return
+                if (challenge.fromPeerId != peer.value || challenge.toPeerId != localPeerId) return
+                if (challenge.status != ChallengeStatus.PENDING) return
+                if (packet.timeControl != null && packet.timeControl != challenge.timeControl) return
+                if (packet.initialFen != null && packet.initialFen != challenge.initialFen) return
+                repository.updateChallengeStatus(challengeId, ChallengeStatus.ACCEPTED)
             }
 
             else -> Unit
@@ -87,6 +99,8 @@ class CommunityRepositoryHandler(
 
     override suspend fun onCommunityDisconnected(peer: PeerId) = Unit
 }
+private const val STANDARD_INITIAL_FEN = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+
 class SqliteCommunityRepository(context: Context) : CommunityRepository {
     private val helper = ChessDatabase(context.applicationContext)
 
@@ -181,25 +195,45 @@ class SqliteCommunityRepository(context: Context) : CommunityRepository {
         val v = ContentValues().apply {
             put("id", challenge.id); put("from_peer_id", challenge.fromPeerId); put("to_peer_id", challenge.toPeerId)
             put("time_control", challenge.timeControl); put("initial_fen", challenge.initialFen); put("created_at", challenge.createdAtMs)
+            put("status", challenge.status.name); challenge.acceptedAtMs?.let { put("accepted_at", it) }
         }
         helper.writableDatabase.insertWithOnConflict("community_challenges", null, v, SQLiteDatabase.CONFLICT_REPLACE)
     }
+
+    override fun updateChallengeStatus(id: String, status: ChallengeStatus, changedAtMs: Long) {
+        val values = ContentValues().apply {
+            put("status", status.name)
+            put("changed_at", changedAtMs)
+            if (status == ChallengeStatus.ACCEPTED) put("accepted_at", changedAtMs) else putNull("accepted_at")
+        }
+        helper.writableDatabase.update("community_challenges", values, "id = ?", arrayOf(id))
+    }
+
+    override fun challenge(id: String): CommunityChallenge? =
+        helper.readableDatabase.query("community_challenges", null, "id = ?", arrayOf(id), null, null, null).use { c ->
+            if (!c.moveToFirst()) return null
+            readChallenge(c)
+        }
 
     override fun challenges(limit: Int): List<CommunityChallenge> {
         require(limit in 1..500)
         val result = mutableListOf<CommunityChallenge>()
         helper.readableDatabase.query("community_challenges", null, null, null, null, null, "created_at DESC", limit.toString()).use { c ->
-            while (c.moveToNext()) result += CommunityChallenge(
-                c.getString(c.getColumnIndexOrThrow("id")),
-                c.getString(c.getColumnIndexOrThrow("from_peer_id")),
-                c.getString(c.getColumnIndexOrThrow("to_peer_id")),
-                c.getString(c.getColumnIndexOrThrow("time_control")),
-                c.getString(c.getColumnIndexOrThrow("initial_fen")),
-                c.getLong(c.getColumnIndexOrThrow("created_at"))
-            )
+            while (c.moveToNext()) result += readChallenge(c)
         }
         return result
     }
+
+    private fun readChallenge(c: android.database.Cursor): CommunityChallenge = CommunityChallenge(
+        c.getString(c.getColumnIndexOrThrow("id")),
+        c.getString(c.getColumnIndexOrThrow("from_peer_id")),
+        c.getString(c.getColumnIndexOrThrow("to_peer_id")),
+        c.getString(c.getColumnIndexOrThrow("time_control")),
+        c.getString(c.getColumnIndexOrThrow("initial_fen")),
+        c.getLong(c.getColumnIndexOrThrow("created_at")),
+        ChallengeStatus.valueOf(c.getString(c.getColumnIndexOrThrow("status"))),
+        c.getLong(c.getColumnIndexOrThrow("accepted_at")).takeIf { !c.isNull(c.getColumnIndexOrThrow("accepted_at")) }
+    )
 
     override fun saveTournament(room: TournamentRoom) {
         val v = ContentValues().apply {
@@ -259,7 +293,7 @@ class SqliteCommunityRepository(context: Context) : CommunityRepository {
     }
 }
 
-internal class ChessDatabase(context: Context) : SQLiteOpenHelper(context, "decentral_chess.db", null, 2) {
+internal class ChessDatabase(context: Context) : SQLiteOpenHelper(context, "decentral_chess.db", null, 3) {
     override fun onCreate(db: SQLiteDatabase) {
         createGames(db)
         createCommunity(db)
@@ -267,6 +301,11 @@ internal class ChessDatabase(context: Context) : SQLiteOpenHelper(context, "dece
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
         if (oldVersion < 2) createCommunity(db)
+        if (oldVersion < 3) {
+            db.execSQL("ALTER TABLE community_challenges ADD COLUMN status TEXT NOT NULL DEFAULT 'PENDING'")
+            db.execSQL("ALTER TABLE community_challenges ADD COLUMN changed_at INTEGER NOT NULL DEFAULT 0")
+            db.execSQL("ALTER TABLE community_challenges ADD COLUMN accepted_at INTEGER")
+        }
     }
 
     private fun createGames(db: SQLiteDatabase) {
@@ -289,7 +328,8 @@ internal class ChessDatabase(context: Context) : SQLiteOpenHelper(context, "dece
             rating INTEGER NOT NULL, games_played INTEGER NOT NULL, is_bot INTEGER NOT NULL)""")
         db.execSQL("""CREATE TABLE IF NOT EXISTS community_challenges (
             id TEXT PRIMARY KEY NOT NULL, from_peer_id TEXT NOT NULL, to_peer_id TEXT NOT NULL,
-            time_control TEXT NOT NULL, initial_fen TEXT NOT NULL, created_at INTEGER NOT NULL)""")
+            time_control TEXT NOT NULL, initial_fen TEXT NOT NULL, created_at INTEGER NOT NULL,
+            status TEXT NOT NULL DEFAULT 'PENDING', changed_at INTEGER NOT NULL DEFAULT 0, accepted_at INTEGER)""")
         db.execSQL("""CREATE TABLE IF NOT EXISTS community_tournaments (
             id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL, owner_peer_id TEXT NOT NULL,
             max_players INTEGER NOT NULL, rated INTEGER NOT NULL)""")
