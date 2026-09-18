@@ -22,6 +22,7 @@ fun CommunityScreen(repository: CommunityRepository, identity: PublicIdentity, o
     var tab by remember { mutableStateOf(CommunityTab.CHANNELS) }
     var selectedChannel by remember { mutableStateOf<CommunityChannel?>(null) }
     var selectedPeer by remember { mutableStateOf<PeerProfile?>(null) }
+    var selectedDmPeer by remember { mutableStateOf<PeerProfile?>(null) }
     var showChallenge by remember { mutableStateOf(false) }
     var showModeration by remember { mutableStateOf(false) }
     var draft by remember { mutableStateOf("") }
@@ -93,7 +94,7 @@ fun CommunityScreen(repository: CommunityRepository, identity: PublicIdentity, o
                 }
                 when (tab) {
                     CommunityTab.CHANNELS -> ChannelList(channels) { selectedChannel = it }
-                    CommunityTab.DMS -> DirectMessageList(peers) { selectedPeer = it }
+                    CommunityTab.DMS -> DirectMessageList(peers) { selectedDmPeer = it }
                     CommunityTab.TOURNAMENTS -> TournamentList(tournaments) { room ->
                         selectedPeer = peers.firstOrNull { it.peerId == room.ownerPeerId }
                         showChallenge = selectedPeer != null
@@ -102,6 +103,17 @@ fun CommunityScreen(repository: CommunityRepository, identity: PublicIdentity, o
                 }
             }
         }
+    }
+
+    selectedDmPeer?.let { peer ->
+        DirectMessageScreen(
+            peer = peer,
+            history = history,
+            localPeerId = localPeerId,
+            onBack = { selectedDmPeer = null },
+            onPeerProfile = { selectedPeer = peer }
+        )
+        return@CommunityScreen
     }
 
     selectedPeer?.let { peer ->
@@ -132,6 +144,52 @@ private fun ChannelList(channels: List<CommunityChannel>, onClick: (CommunityCha
     }
 }
 
+@Composable
+private fun DirectMessageScreen(
+    peer: PeerProfile,
+    history: CommunityHistory,
+    localPeerId: String,
+    onBack: () -> Unit,
+    onPeerProfile: () -> Unit
+) {
+    val conversationId = listOf(localPeerId, peer.peerId).sorted().joinToString(":")
+    var draft by remember(peer.peerId) { mutableStateOf("") }
+    var messages by remember(peer.peerId) { mutableStateOf(history.messages(conversationId)) }
+
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = { Column { Text(peer.displayName); Text("Rating ${peer.rating}", style = MaterialTheme.typography.labelSmall) } },
+                navigationIcon = { TextButton(onClick = onBack) { Text("‹") } },
+                actions = { TextButton(onClick = onPeerProfile) { Text("Profile") } }
+            )
+        },
+        bottomBar = {
+            Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                OutlinedTextField(value = draft, onValueChange = { draft = it }, modifier = Modifier.weight(1f), placeholder = { Text("Message…") }, singleLine = true)
+                Spacer(Modifier.width(8.dp))
+                Button(enabled = draft.isNotBlank(), onClick = {
+                    val msg = CommunityMessage("dm-${UUID.randomUUID()}", conversationId, localPeerId, draft.trim(), System.currentTimeMillis())
+                    history.append(msg)
+                    messages = history.messages(conversationId)
+                    draft = ""
+                }) { Text("Send") }
+            }
+        }
+    ) { padding ->
+        LazyColumn(Modifier.fillMaxSize().padding(padding).padding(horizontal = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (messages.isEmpty()) item { Text("Start a private conversation with ${peer.displayName}.", modifier = Modifier.padding(16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            items(messages) { msg ->
+                Card(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(12.dp)) {
+                        Text(if (msg.senderPeerId == localPeerId) "You" else peer.displayName, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.primary)
+                        Text(msg.text)
+                    }
+                }
+            }
+        }
+    }
+}
 @Composable
 private fun DirectMessageList(peers: List<PeerProfile>, onClick: (PeerProfile) -> Unit) {
     LazyColumn(Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
