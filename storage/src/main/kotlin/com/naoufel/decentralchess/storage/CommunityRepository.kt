@@ -24,6 +24,50 @@ interface CommunityRepository : CommunityHistory {
     fun saveReport(report: CommunityReport)
 }
 
+/**
+ * Bridges authenticated P2P community traffic into the persistent local repository.
+ * Moderation is enforced before remote messages are stored.
+ */
+class CommunityRepositoryHandler(
+    private val repository: CommunityRepository
+) : CommunityEnvelopeHandler {
+    override suspend fun onCommunityEnvelope(
+        peer: PeerId,
+        envelope: ProtocolEnvelope,
+        packet: CommunityPacket
+    ) {
+        if (repository.moderation().blockedPeers.contains(peer.value)) return
+
+        when (envelope.type) {
+            MessageType.CHAT, MessageType.DM -> {
+                repository.append(
+                    CommunityMessage(
+                        id = envelope.messageId,
+                        conversationId = packet.conversationId,
+                        senderPeerId = peer.value,
+                        text = packet.text,
+                        createdAtMs = System.currentTimeMillis()
+                    )
+                )
+            }
+            MessageType.PROFILE -> {
+                val displayName = packet.displayName?.takeIf { it.isNotBlank() } ?: peer.value.take(16)
+                repository.upsertPeer(
+                    PeerProfile(
+                        peerId = peer.value,
+                        displayName = displayName,
+                        publicKeyBase64 = envelope.senderPublicKeyBase64.orEmpty(),
+                        rating = packet.rating ?: 1200
+                    )
+                )
+            }
+            else -> Unit
+        }
+    }
+
+    override suspend fun onCommunityDisconnected(peer: PeerId) = Unit
+}
+
 class SqliteCommunityRepository(context: Context) : CommunityRepository {
     private val helper = ChessDatabase(context.applicationContext)
 
