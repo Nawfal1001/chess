@@ -16,20 +16,22 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.naoufel.decentralchess.chess.*
 import com.naoufel.decentralchess.storage.GameRecordRepository
+import com.naoufel.decentralchess.storage.CommunityRepository
+import com.naoufel.decentralchess.storage.SqliteCommunityRepository
 import com.naoufel.decentralchess.storage.SqliteGameRecordRepository
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContent { DecentralChessApp(SqliteGameRecordRepository(applicationContext)) }
+        setContent { DecentralChessApp(SqliteGameRecordRepository(applicationContext), SqliteCommunityRepository(applicationContext)) }
     }
 }
 
 @Composable
-fun DecentralChessApp(repository: GameRecordRepository) {
+fun DecentralChessApp(repository: GameRecordRepository, communityRepository: CommunityRepository) {
     var showCommunity by remember { mutableStateOf(false) }
     if (showCommunity) {
-        CommunityScreen(onBack = { showCommunity = false })
+        CommunityScreen(repository = communityRepository, onBack = { showCommunity = false })
         return
     }
     val restored = remember {
