@@ -33,4 +33,23 @@ class CheatDetectionTest {
         val result = CheatDetectionAnalyzer().assess(moves)
         assertFalse(result.reviewRecommended)
     }
+
+
+    @Test
+    fun rankAndDifficultyEvidence_isIncluded() {
+        val moves = (1..12).map {
+            AnalyzedMove(
+                move = "e4",
+                engineBestMove = "e4",
+                centipawnLoss = 0,
+                thinkTimeMs = 1000,
+                engineRank = 1,
+                positionDifficulty = 0.9,
+                baselineThinkTimeMs = 10000
+            )
+        }
+        val assessment = CheatDetectionAnalyzer().assess(moves)
+        kotlin.test.assertTrue(assessment.signals.any { it.type == CheatSignal.Type.PATTERN_CONCENTRATION })
+        kotlin.test.assertTrue(assessment.signals.any { it.type == CheatSignal.Type.TIMING_ANOMALY })
+    }
 }
