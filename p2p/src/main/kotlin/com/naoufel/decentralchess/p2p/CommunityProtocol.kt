@@ -109,14 +109,18 @@ object CommunityP2PReceiver {
     fun decode(
         envelope: ProtocolEnvelope,
         expectedSenderPeerId: String? = null,
-        expectedPublicKeyBase64: String? = null
+        expectedPublicKeyBase64: String? = null,
+        requireSignature: Boolean = false
     ): CommunityPacket {
         require(envelope.type in COMMUNITY_TYPES)
         if (expectedSenderPeerId != null && envelope.senderPeerId != expectedSenderPeerId) {
             throw P2PMatchException.InvalidSender(expectedSenderPeerId, envelope.senderPeerId)
         }
-        if (expectedPublicKeyBase64 != null) {
-            if (envelope.senderPublicKeyBase64 != expectedPublicKeyBase64 || !EnvelopeVerifier.verify(envelope)) {
+        if (requireSignature || expectedPublicKeyBase64 != null) {
+            if (expectedPublicKeyBase64 != null && envelope.senderPublicKeyBase64 != expectedPublicKeyBase64) {
+                throw P2PMatchException.InvalidMessage("Unexpected community sender public key")
+            }
+            if (!EnvelopeVerifier.verify(envelope)) {
                 throw P2PMatchException.InvalidMessage("Invalid community envelope signature")
             }
         }
