@@ -79,3 +79,9 @@ The repository contains CI configuration, but the GitHub connector currently rep
 - Incoming CHAT, DM, and PROFILE packets can be persisted through CommunityRepositoryHandler.
 - Sender identity is bound to the envelope and community packet; remote signatures can be verified against the expected public key.
 - Community transport is still peer-session based: global discovery/relay and always-online channels remain a separate infrastructure layer.
+
+### v0.8 — Multi-peer community session routing
+
+The community transport now has a dedicated CommunitySessionManager above the authenticated P2P session controller. It maintains peer → authenticated session mappings, channel subscriptions, delivery queues/retry, direct messages, channel messages, profiles, and challenge/accept routing. Remote challenge handling is bound to the actual local recipient peer before persistence, preventing a peer from storing a challenge addressed to somebody else.
+
+The manager intentionally reuses the existing ECDSA-authenticated AuthenticatedP2PSessionController; it does not create a second networking or cryptographic stack. Global channels and discovery still require a future rendezvous/relay layer because direct P2P sessions alone cannot make a channel globally available while every peer is offline.
