@@ -103,7 +103,10 @@ fun CommunityScreen(repository: CommunityRepository, identity: PublicIdentity, r
                         selectedPeer = peers.firstOrNull { it.peerId == room.ownerPeerId }
                         showChallenge = selectedPeer != null
                     }
-                    CommunityTab.GAMES -> ActiveGames(peers) { selectedPeer = it; showChallenge = true }
+                    CommunityTab.GAMES -> Column(Modifier.fillMaxSize()) {
+                        ChallengeInbox(repository, runtime, localPeerId)
+                        ActiveGames(peers) { selectedPeer = it; showChallenge = true }
+                    }
                 }
             }
         }
@@ -233,6 +236,42 @@ private fun TournamentList(tournaments: List<TournamentRoom>, onJoin: (Tournamen
 }
 
 @Composable
+private fun ChallengeInbox(repository: CommunityRepository, runtime: CommunityRuntime, localPeerId: String) {
+    val scope = rememberCoroutineScope()
+    var challenges by remember { mutableStateOf(repository.challenges().filter { it.toPeerId == localPeerId && it.status == ChallengeStatus.PENDING }) }
+    if (challenges.isNotEmpty()) {
+        Column(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp)) {
+            SectionHeader("Incoming challenges")
+            challenges.forEach { challenge ->
+                val peer = repository.peer(challenge.fromPeerId)
+                Card(Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
+                    Column(Modifier.padding(12.dp)) {
+                        Text((peer?.displayName ?: challenge.fromPeerId) + " • " + challenge.timeControl, fontWeight = FontWeight.Bold)
+                        Text("Challenge received")
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(onClick = {
+                                scope.launch {
+                                    runCatching {
+                                        runtime.acceptChallenge(challenge.fromPeerId, challenge.id, challenge.timeControl, challenge.initialFen)
+                                    }.onSuccess {
+                                        repository.updateChallengeStatus(challenge.id, ChallengeStatus.ACCEPTED)
+                                        challenges = repository.challenges().filter { it.toPeerId == localPeerId && it.status == ChallengeStatus.PENDING }
+                                    }
+                                }
+                            }) { Text("Accept") }
+                            OutlinedButton(onClick = {
+                                repository.updateChallengeStatus(challenge.id, ChallengeStatus.DECLINED)
+                                challenges = repository.challenges().filter { it.toPeerId == localPeerId && it.status == ChallengeStatus.PENDING }
+                            }) { Text("Decline") }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 private fun ActiveGames(peers: List<PeerProfile>, onSpectate: (PeerProfile) -> Unit) {
     LazyColumn(Modifier.fillMaxSize().padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item { SectionHeader("Live games & spectators") }
@@ -345,8 +384,9 @@ private fun ChallengeDialog(peer: PeerProfile, repository: CommunityRepository, 
         },
         confirmButton = { Button(onClick = {
             val challengeId = UUID.randomUUID().toString()
-            repository.saveChallenge(CommunityChallenge(challengeId, localPeerId, peer.peerId, control, "startpos", System.currentTimeMillis()))
-            scope.launch { runCatching { runtime.sendChallenge(peer.peerId, challengeId, control, "startpos") } }
+            val initialFen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1"
+            repository.saveChallenge(CommunityChallenge(challengeId, localPeerId, peer.peerId, control, initialFen, System.currentTimeMillis()))
+            scope.launch { runCatching { runtime.sendChallenge(peer.peerId, challengeId, control, initialFen) } }
             onDismiss()
         }) { Text("Send ${control}") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
