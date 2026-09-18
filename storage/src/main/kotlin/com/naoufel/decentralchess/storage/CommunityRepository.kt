@@ -301,7 +301,7 @@ internal class ChessDatabase(context: Context) : SQLiteOpenHelper(context, "dece
 
     override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
         if (oldVersion < 2) createCommunity(db)
-        if (oldVersion < 3) {
+        if (oldVersion in 2 until 3) {
             db.execSQL("ALTER TABLE community_challenges ADD COLUMN status TEXT NOT NULL DEFAULT 'PENDING'")
             db.execSQL("ALTER TABLE community_challenges ADD COLUMN changed_at INTEGER NOT NULL DEFAULT 0")
             db.execSQL("ALTER TABLE community_challenges ADD COLUMN accepted_at INTEGER")
