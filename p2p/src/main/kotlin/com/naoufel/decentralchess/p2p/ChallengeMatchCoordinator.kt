@@ -62,6 +62,7 @@ class ChallengeMatchCoordinator(
         val controller = factory.create(challenge, localPeerId, remotePeerId, localSide)
         controllers[challenge.matchId] = controller
         sessions.register(remotePeerId, controller)
+        controller.connect()
         return controller
     }
 
