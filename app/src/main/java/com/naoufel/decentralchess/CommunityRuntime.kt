@@ -4,19 +4,40 @@ import com.naoufel.decentralchess.identity.PublicIdentity
 import com.naoufel.decentralchess.p2p.*
 import com.naoufel.decentralchess.storage.CommunityRepository
 
-/**
- * App-level composition root for community networking.
- *
- * It owns the routing manager and authenticated inbound handler, but deliberately does not
- * pretend that a peer is online until a READY AuthenticatedP2PSessionController is registered.
- */
 class CommunityRuntime(
     val repository: CommunityRepository,
-    val identity: PublicIdentity
+    val identity: PublicIdentity,
+    challengeMatchFactory: ChallengeMatchSessionFactory? = null
 ) {
     val sessionManager = CommunitySessionManager(PeerId(identity.id))
+
+    val matchCoordinator: ChallengeMatchCoordinator? = challengeMatchFactory?.let {
+        ChallengeMatchCoordinator(PeerId(identity.id), sessionManager, it)
+    }
+
+    private val membershipListener = object : CommunityMembershipListener {
+        override suspend fun onChannelJoin(peer: PeerId, channelId: String) {
+            sessionManager.subscribe(peer, channelId)
+        }
+
+        override suspend fun onChannelLeave(peer: PeerId, channelId: String) {
+            sessionManager.unsubscribe(peer, channelId)
+        }
+    }
+
+    private val challengeAcceptanceListener = object : CommunityChallengeAcceptanceListener {
+        override suspend fun onChallengeAccepted(challenge: AcceptedChallenge) {
+            matchCoordinator?.accept(challenge)
+        }
+    }
+
     val handler: CommunityEnvelopeHandler =
-        CommunityRepositoryHandler(repository, identity.id)
+        CommunityRepositoryHandler(
+            repository = repository,
+            localPeerId = identity.id,
+            challengeAcceptanceListener = challengeAcceptanceListener,
+            membershipListener = membershipListener
+        )
 
     fun isConnected(peerId: String): Boolean =
         sessionManager.isConnected(PeerId(peerId))
@@ -45,7 +66,13 @@ class CommunityRuntime(
             CommunityPacket(channelId, identity.id, text)
         }
 
-    suspend fun joinChannel(peerId: String, channelId: String): CommunityDelivery =\n        sessionManager.joinChannel(PeerId(peerId), channelId)\n\n    suspend fun leaveChannel(peerId: String, channelId: String): CommunityDelivery =\n        sessionManager.leaveChannel(PeerId(peerId), channelId)\n\n    suspend fun sendChallenge(
+    suspend fun joinChannel(peerId: String, channelId: String): CommunityDelivery =
+        sessionManager.joinChannel(PeerId(peerId), channelId)
+
+    suspend fun leaveChannel(peerId: String, channelId: String): CommunityDelivery =
+        sessionManager.leaveChannel(PeerId(peerId), channelId)
+
+    suspend fun sendChallenge(
         peerId: String,
         challengeId: String,
         timeControl: String,
@@ -63,4 +90,9 @@ class CommunityRuntime(
 
     suspend fun retryPending(): List<CommunityDelivery> =
         sessionManager.retryPending()
+
+    fun activeMatchIds(): Set<String> = matchCoordinator?.activeMatchIds().orEmpty()
+
+    fun matchController(matchId: String): AuthenticatedP2PSessionController? =
+        matchCoordinator?.controller(matchId)
 }
