@@ -5,6 +5,9 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertThrows
+import java.security.KeyPairGenerator
+import java.security.Signature
+import java.util.Base64
 
 class CommunityProtocolTest {
     @Test
@@ -46,6 +49,29 @@ class CommunityProtocolTest {
         assertThrows(P2PMatchException.InvalidSender::class.java) {
             CommunityP2PReceiver.decode(envelope, "local")
         }
+    }
+
+
+    @Test
+    fun authenticatedReceiverAcceptsValidSignature() {
+        val pair = KeyPairGenerator.getInstance("EC").apply { initialize(256) }.generateKeyPair()
+        val publicKey = Base64.getEncoder().encodeToString(pair.public.encoded)
+        val peerId = HandshakeCrypto.peerIdForPublicKey(publicKey)
+        val identity = EnvelopeIdentity(peerId, publicKey) { payload ->
+            Signature.getInstance("SHA256withECDSA").apply {
+                initSign(pair.private)
+                update(payload)
+            }.sign()
+        }
+        val packet = CommunityPacket("global", peerId.value, "signed hello")
+        val unsigned = ProtocolEnvelope(
+            P2PProtocol.VERSION, "msg-signed", "session-1", "match-1",
+            peerId.value, MessageType.CHAT, 0, CommunityPacketCodec.encode(packet), publicKey
+        )
+        val signed = unsigned.copy(
+            signatureBase64 = identity.sign(unsigned)
+        )
+        assertEquals(packet, CommunityP2PReceiver.decode(signed, peerId.value, requireSignature = true))
     }
 
     @Test
