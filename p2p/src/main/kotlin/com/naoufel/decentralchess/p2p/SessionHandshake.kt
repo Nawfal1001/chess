@@ -301,7 +301,9 @@ class AuthenticatedP2PSessionController(
     private val transport: PeerTransport,
     private val identity: HandshakeIdentity,
     verifySignature: (ProtocolEnvelope) -> Boolean,
-    private val communityHandler: CommunityEnvelopeHandler? = null
+    private val communityHandler: CommunityEnvelopeHandler? = null,
+    private val telemetrySink: MatchTelemetrySink? = null,
+    private val clockMs: () -> Long = { System.currentTimeMillis() }
 ) : PeerTransportListener {
     private val handshake = SessionHandshake(
         state.localPeerId, state.remotePeerId, state.sessionId, state.matchId,
@@ -326,6 +328,15 @@ class AuthenticatedP2PSessionController(
     suspend fun sendMove(move: com.naoufel.decentralchess.chess.Move): ProtocolEnvelope {
         handshake.requireReady()
         val envelope = state.createLocalMove(move)
+        telemetrySink?.record(MoveTelemetry(
+            gameId = state.matchId,
+            plySequence = envelope.sequence,
+            peerId = state.localPeerId.value,
+            observedAtMs = clockMs(),
+            clientThinkTimeMs = null,
+            moveHash = authenticatedMoveHash(envelope),
+            remoteObservation = false
+        ))
         transport.send(state.remotePeerId, ProtocolEnvelopeCodec.encode(envelope))
         return envelope
     }
@@ -376,6 +387,15 @@ class AuthenticatedP2PSessionController(
         when (envelope.type) {
             MessageType.MOVE -> {
                 state.receive(envelope)
+                telemetrySink?.record(MoveTelemetry(
+                    gameId = state.matchId,
+                    plySequence = envelope.sequence,
+                    peerId = envelope.senderPeerId,
+                    observedAtMs = clockMs(),
+                    clientThinkTimeMs = null,
+                    moveHash = authenticatedMoveHash(envelope),
+                    remoteObservation = true
+                ))
                 val ack = state.createAck(envelope)
                 transport.send(state.remotePeerId, ProtocolEnvelopeCodec.encode(ack))
             }
