@@ -93,7 +93,7 @@ class CommunityP2PClient(
         packet: CommunityPacket,
         sessionId: String? = this.sessionId,
         matchId: String? = this.matchId
-    ) {
+    ): ProtocolEnvelope {
         require(type in COMMUNITY_TYPES)
         require(!sessionId.isNullOrBlank() && !matchId.isNullOrBlank())
         require(packet.senderPeerId == localPeerId.value)
@@ -102,9 +102,11 @@ class CommunityP2PClient(
             localPeerId.value, type, nextSequence(), CommunityPacketCodec.encode(packet),
             identity?.publicKeyBase64
         )
-        send(if (identity == null) unsigned else unsigned.copy(
+        val envelope = if (identity == null) unsigned else unsigned.copy(
             signatureBase64 = identity.sign(unsigned)
-        ))
+        )
+        send(envelope)
+        return envelope
     }
 }
 
