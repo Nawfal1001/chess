@@ -22,7 +22,7 @@ private enum class CommunityTab { CHANNELS, DMS, TOURNAMENTS, GAMES }
 fun CommunityScreen(repository: CommunityRepository, identity: PublicIdentity, runtime: CommunityRuntime, onBack: () -> Unit) {
     var tab by remember { mutableStateOf(CommunityTab.CHANNELS) }
     var selectedChannel by remember { mutableStateOf<CommunityChannel?>(null) }
-    var selectedPeer by remember { mutableStateOf<PeerProfile?>(null) }
+    var selectedPeer by remember { mutableStateOf<PeerProfile?>(null) }\n    var selectedMatchId by remember { mutableStateOf<String?>(null) }
     var selectedDmPeer by remember { mutableStateOf<PeerProfile?>(null) }
     var showChallenge by remember { mutableStateOf(false) }
     var showModeration by remember { mutableStateOf(false) }
@@ -59,6 +59,15 @@ fun CommunityScreen(repository: CommunityRepository, identity: PublicIdentity, r
                 TournamentRoom("t3", "Beginner Ladder", "peer-coach", 16, false)
             ).also { it.forEach(repository::saveTournament) }
         }
+    }
+
+    selectedMatchId?.let { matchId ->
+        val controller = runtime.matchController(matchId)
+        if (controller != null) {
+            OnlineMatchScreen(controller) { selectedMatchId = null }
+            return@CommunityScreen
+        }
+        selectedMatchId = null
     }
 
     if (selectedChannel != null) {
@@ -105,6 +114,20 @@ fun CommunityScreen(repository: CommunityRepository, identity: PublicIdentity, r
                     }
                     CommunityTab.GAMES -> Column(Modifier.fillMaxSize()) {
                         ChallengeInbox(repository, runtime, localPeerId)
+                        runtime.activeMatchIds().firstOrNull()?.let { matchId ->
+                            Card(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp)) {
+                                Row(
+                                    Modifier.fillMaxWidth().padding(12.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(Modifier.weight(1f)) {
+                                        Text("Your online match", fontWeight = FontWeight.Bold)
+                                        Text(matchId.take(12) + "…", style = MaterialTheme.typography.labelSmall)
+                                    }
+                                    Button(onClick = { selectedMatchId = matchId }) { Text("Open") }
+                                }
+                            }
+                        }
                         ActiveGames(peers) { selectedPeer = it; showChallenge = true }
                     }
                 }
