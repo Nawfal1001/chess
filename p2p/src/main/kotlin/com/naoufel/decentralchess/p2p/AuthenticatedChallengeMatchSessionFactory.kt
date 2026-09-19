@@ -62,7 +62,7 @@ class AuthenticatedChallengeMatchSessionFactory(
             state = state,
             transport = transportProvider.transportFor(remotePeerId),
             identity = localIdentity,
-            verifySignature = HandshakeCrypto.verifierFor(remotePublicKey),
+            verifySignature = { envelope ->\n                envelope.senderPublicKeyBase64 == remotePublicKey && EnvelopeVerifier.verify(envelope)\n            },
             communityHandler = communityHandler,
             telemetrySink = telemetrySink,
             clockMs = clockMs
